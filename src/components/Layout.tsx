@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import { useAuthStore } from '../store/authStore'
+import { logout } from '../api/auth'
 
 const navLinks = [
   { to: '/', label: 'Today', end: true },
@@ -11,7 +12,7 @@ const navLinks = [
 
 export default function Layout() {
   const { segments, hydrate } = useAppStore()
-  const { status, init } = useAuthStore()
+  const { status, init, user } = useAuthStore()
 
   useEffect(() => { init() }, [])
   useEffect(() => {
@@ -81,14 +82,36 @@ export default function Layout() {
           ))}
         </div>
 
-        {total > 0 && (
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 12, color: '#6b7280' }}>{done}/{total} lessons</span>
-            <div style={{ width: 80, height: 4, background: '#2a2a35', borderRadius: 2 }}>
-              <div style={{ width: `${(done / total) * 100}%`, height: '100%', background: '#818cf8', borderRadius: 2, transition: 'width 0.4s ease' }} />
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
+          {total > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 12, color: '#6b7280' }}>{done}/{total} lessons</span>
+              <div style={{ width: 80, height: 4, background: '#2a2a35', borderRadius: 2 }}>
+                <div style={{ width: `${(done / total) * 100}%`, height: '100%', background: '#818cf8', borderRadius: 2, transition: 'width 0.4s ease' }} />
+              </div>
             </div>
-          </div>
-        )}
+          )}
+          {user && (
+            <span style={{ fontSize: 12, color: '#9ca3af', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {user.name || user.email}
+            </span>
+          )}
+          <button
+            onClick={logout}
+            style={{
+              background: 'none',
+              border: '1px solid #2a2a35',
+              borderRadius: 4,
+              color: '#6b7280',
+              cursor: 'pointer',
+              fontSize: 11,
+              letterSpacing: '0.06em',
+              padding: '3px 10px',
+            }}
+          >
+            SIGN OUT
+          </button>
+        </div>
       </nav>
 
       <main>

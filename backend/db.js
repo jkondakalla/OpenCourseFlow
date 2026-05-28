@@ -9,6 +9,7 @@ db.pragma('foreign_keys = ON')
 db.exec(`
   CREATE TABLE IF NOT EXISTS courses (
     id                 TEXT PRIMARY KEY,
+    user_id            TEXT NOT NULL DEFAULT '',
     title              TEXT NOT NULL,
     description        TEXT NOT NULL DEFAULT '',
     instructor         TEXT NOT NULL DEFAULT '',
@@ -19,20 +20,21 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS lectures (
-    id         TEXT PRIMARY KEY,
-    course_id  TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
-    title      TEXT NOT NULL,
-    unit       TEXT NOT NULL DEFAULT '',
-    section    TEXT,
-    ord        INTEGER NOT NULL DEFAULT 0,
-    content    TEXT NOT NULL DEFAULT '',
-    video_url  TEXT,
+    id          TEXT PRIMARY KEY,
+    course_id   TEXT NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL,
+    unit        TEXT NOT NULL DEFAULT '',
+    section     TEXT,
+    ord         INTEGER NOT NULL DEFAULT 0,
+    content     TEXT NOT NULL DEFAULT '',
+    video_url   TEXT,
     has_segment INTEGER NOT NULL DEFAULT 0,
-    segment_id TEXT
+    segment_id  TEXT
   );
 
   CREATE TABLE IF NOT EXISTS segments (
     id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL DEFAULT '',
     lecture_id    TEXT NOT NULL,
     course_id     TEXT NOT NULL,
     lecture_title TEXT NOT NULL,
@@ -47,21 +49,60 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS daily_logs (
-    date         TEXT PRIMARY KEY,
-    segment_ids  TEXT NOT NULL DEFAULT '[]'
+    user_id     TEXT NOT NULL DEFAULT '',
+    date        TEXT NOT NULL,
+    segment_ids TEXT NOT NULL DEFAULT '[]',
+    PRIMARY KEY (user_id, date)
   );
 
   CREATE TABLE IF NOT EXISTS settings (
-    id   INTEGER PRIMARY KEY CHECK (id = 1),
-    data TEXT NOT NULL DEFAULT '{}'
+    user_id TEXT PRIMARY KEY,
+    data    TEXT NOT NULL DEFAULT '{}'
   );
-  INSERT OR IGNORE INTO settings (id, data) VALUES (1, '{}');
 `)
+
+// ── Migrations for existing DBs that predate user_id ────────────────────────
+
+db.transaction(() => {
+  const cols = name => db.pragma(`table_info(${name})`).map(c => c.name)
+
+  if (!cols('courses').includes('user_id')) {
+    db.exec(`ALTER TABLE courses ADD COLUMN user_id TEXT NOT NULL DEFAULT ''`)
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_courses_user ON courses(user_id)`)
+
+  if (!cols('segments').includes('user_id')) {
+    db.exec(`ALTER TABLE segments ADD COLUMN user_id TEXT NOT NULL DEFAULT ''`)
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_segments_user ON segments(user_id)`)
+
+  // daily_logs: old schema had date TEXT PRIMARY KEY — recreate with composite PK
+  if (!cols('daily_logs').includes('user_id')) {
+    db.exec(`
+      CREATE TABLE daily_logs_new (
+        user_id     TEXT NOT NULL DEFAULT '',
+        date        TEXT NOT NULL,
+        segment_ids TEXT NOT NULL DEFAULT '[]',
+        PRIMARY KEY (user_id, date)
+      )
+    `)
+    db.exec(`INSERT INTO daily_logs_new (user_id, date, segment_ids) SELECT '', date, segment_ids FROM daily_logs`)
+    db.exec(`DROP TABLE daily_logs`)
+    db.exec(`ALTER TABLE daily_logs_new RENAME TO daily_logs`)
+  }
+
+  // settings: old schema had id INTEGER PRIMARY KEY CHECK (id = 1) — recreate as per-user
+  if (!cols('settings').includes('user_id')) {
+    db.exec(`CREATE TABLE settings_new (user_id TEXT PRIMARY KEY, data TEXT NOT NULL DEFAULT '{}')`)
+    db.exec(`DROP TABLE settings`)
+    db.exec(`ALTER TABLE settings_new RENAME TO settings`)
+  }
+})()
 
 // ── Courses ──────────────────────────────────────────────────────────────────
 
-export function getCourses() {
-  const courses = db.prepare('SELECT * FROM courses ORDER BY imported_at DESC').all()
+export function getCourses(userId) {
+  const courses = db.prepare('SELECT * FROM courses WHERE user_id = ? ORDER BY imported_at DESC').all(userId)
   return courses.map(c => ({
     ...c,
     importedAt: c.imported_at,
@@ -70,8 +111,8 @@ export function getCourses() {
   }))
 }
 
-export function getCourse(id) {
-  const c = db.prepare('SELECT * FROM courses WHERE id = ?').get(id)
+export function getCourse(id, userId) {
+  const c = db.prepare('SELECT * FROM courses WHERE id = ? AND user_id = ?').get(id, userId)
   if (!c) return null
   return {
     ...c,
@@ -83,10 +124,11 @@ export function getCourse(id) {
 
 export const insertCourse = db.transaction((course) => {
   db.prepare(`
-    INSERT OR REPLACE INTO courses (id, title, description, instructor, subject, level, imported_at, completed_segments)
-    VALUES (@id, @title, @description, @instructor, @subject, @level, @imported_at, @completed_segments)
+    INSERT OR REPLACE INTO courses (id, user_id, title, description, instructor, subject, level, imported_at, completed_segments)
+    VALUES (@id, @user_id, @title, @description, @instructor, @subject, @level, @imported_at, @completed_segments)
   `).run({
     id: course.id,
+    user_id: course.userId,
     title: course.title,
     description: course.description ?? '',
     instructor: course.instructor ?? '',
@@ -115,15 +157,15 @@ export const insertCourse = db.transaction((course) => {
   }
 })
 
-export const deleteCourse = db.transaction((id) => {
-  db.prepare('DELETE FROM segments WHERE course_id = ?').run(id)
-  db.prepare('DELETE FROM courses WHERE id = ?').run(id)
+export const deleteCourse = db.transaction((id, userId) => {
+  db.prepare('DELETE FROM segments WHERE course_id = ? AND user_id = ?').run(id, userId)
+  db.prepare('DELETE FROM courses WHERE id = ? AND user_id = ?').run(id, userId)
 })
 
 // ── Segments ─────────────────────────────────────────────────────────────────
 
-export function getSegments() {
-  const rows = db.prepare('SELECT * FROM segments').all()
+export function getSegments(userId) {
+  const rows = db.prepare('SELECT * FROM segments WHERE user_id = ?').all(userId)
   const out = {}
   for (const s of rows) out[s.id] = normSegment(s)
   return out
@@ -132,11 +174,12 @@ export function getSegments() {
 export function insertSegment(seg) {
   db.prepare(`
     INSERT OR REPLACE INTO segments
-      (id, lecture_id, course_id, lecture_title, course_title, unit, section, generated_at, quiz, tasks, completed_at, quiz_score)
+      (id, user_id, lecture_id, course_id, lecture_title, course_title, unit, section, generated_at, quiz, tasks, completed_at, quiz_score)
     VALUES
-      (@id, @lecture_id, @course_id, @lecture_title, @course_title, @unit, @section, @generated_at, @quiz, @tasks, @completed_at, @quiz_score)
+      (@id, @user_id, @lecture_id, @course_id, @lecture_title, @course_title, @unit, @section, @generated_at, @quiz, @tasks, @completed_at, @quiz_score)
   `).run({
     id: seg.id,
+    user_id: seg.userId,
     lecture_id: seg.lectureId,
     course_id: seg.courseId,
     lecture_title: seg.lectureTitle,
@@ -154,38 +197,36 @@ export function insertSegment(seg) {
     .run(seg.id, seg.lectureId)
 }
 
-export function patchSegment(id, patch) {
+export function patchSegment(id, userId, patch) {
   if (patch.completedAt !== undefined) {
-    db.prepare('UPDATE segments SET completed_at = ?, quiz_score = ? WHERE id = ?')
-      .run(patch.completedAt, patch.quizScore ?? null, id)
+    db.prepare('UPDATE segments SET completed_at = ?, quiz_score = ? WHERE id = ? AND user_id = ?')
+      .run(patch.completedAt, patch.quizScore ?? null, id, userId)
   }
   if (patch.quiz !== undefined) {
-    db.prepare('UPDATE segments SET quiz = ?, tasks = ? WHERE id = ?')
-      .run(JSON.stringify(patch.quiz), JSON.stringify(patch.tasks ?? []), id)
+    db.prepare('UPDATE segments SET quiz = ?, tasks = ? WHERE id = ? AND user_id = ?')
+      .run(JSON.stringify(patch.quiz), JSON.stringify(patch.tasks ?? []), id, userId)
   }
 }
 
-export function updateCourseCompletedSegments(courseId, delta) {
-  db.prepare('UPDATE courses SET completed_segments = completed_segments + ? WHERE id = ?')
-    .run(delta, courseId)
+export function updateCourseCompletedSegments(courseId, userId, delta) {
+  db.prepare('UPDATE courses SET completed_segments = completed_segments + ? WHERE id = ? AND user_id = ?')
+    .run(delta, courseId, userId)
 }
 
 // ── Daily logs ───────────────────────────────────────────────────────────────
 
-export function getDailyLogs() {
-  return db.prepare('SELECT * FROM daily_logs ORDER BY date DESC').all()
+export function getDailyLogs(userId) {
+  return db.prepare('SELECT * FROM daily_logs WHERE user_id = ? ORDER BY date DESC').all(userId)
     .map(r => ({ date: r.date, segmentIds: JSON.parse(r.segment_ids) }))
 }
 
-export function upsertDailyLog(log) {
-  db.prepare('INSERT OR REPLACE INTO daily_logs (date, segment_ids) VALUES (?, ?)')
-    .run(log.date, JSON.stringify(log.segmentIds ?? []))
+export function upsertDailyLog(userId, log) {
+  db.prepare('INSERT OR REPLACE INTO daily_logs (user_id, date, segment_ids) VALUES (?, ?, ?)')
+    .run(userId, log.date, JSON.stringify(log.segmentIds ?? []))
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 
-// Env-var defaults for the nightly AI job. Any value saved via PUT /api/settings
-// (from the frontend) takes precedence because it's merged last via spread below.
 const ENV_SETTINGS_DEFAULTS = {
   aiProvider:   process.env.AI_PROVIDER  ?? 'none',
   ollamaUrl:    process.env.OLLAMA_URL   ?? 'http://localhost:11434',
@@ -195,14 +236,14 @@ const ENV_SETTINGS_DEFAULTS = {
   dailyGoal:    2,
 }
 
-export function getSettings() {
-  const row = db.prepare('SELECT data FROM settings WHERE id = 1').get()
+export function getSettings(userId) {
+  const row = db.prepare('SELECT data FROM settings WHERE user_id = ?').get(userId)
   const stored = row ? JSON.parse(row.data) : {}
   return { ...ENV_SETTINGS_DEFAULTS, ...stored }
 }
 
-export function saveSettings(settings) {
-  db.prepare('UPDATE settings SET data = ? WHERE id = 1').run(JSON.stringify(settings))
+export function saveSettings(userId, settings) {
+  db.prepare('INSERT OR REPLACE INTO settings (user_id, data) VALUES (?, ?)').run(userId, JSON.stringify(settings))
 }
 
 // ── Normalise DB rows to frontend shape ───────────────────────────────────────
@@ -243,12 +284,13 @@ function normSegment(r) {
 
 export function getLecturesWithoutSegments() {
   return db.prepare(`
-    SELECT l.*, c.title AS course_title
+    SELECT l.*, c.title AS course_title, c.user_id
     FROM lectures l
     JOIN courses c ON c.id = l.course_id
     WHERE l.has_segment = 0 AND l.content != ''
   `).all().map(r => ({
     id: r.id,
+    userId: r.user_id,
     courseId: r.course_id,
     courseTitle: r.course_title,
     title: r.title,
