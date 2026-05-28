@@ -1,9 +1,7 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 ARG VITE_JKOS_AUTH_URL=https://auth.jkos.net
-ARG VITE_APP_ORIGIN=https://sylibos.jkos.net
 ENV VITE_JKOS_AUTH_URL=$VITE_JKOS_AUTH_URL
-ENV VITE_APP_ORIGIN=$VITE_APP_ORIGIN
 COPY package.json package-lock.json* ./
 RUN npm install
 COPY . .

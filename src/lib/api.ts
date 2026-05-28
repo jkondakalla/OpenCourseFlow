@@ -1,82 +1,70 @@
 import type { Course, Segment, DailyLog, AppSettings } from '../types'
+import { redirectToLogin } from '../api/auth'
 
-let _baseUrl = ''
-let _token = ''
+const AUTH_URL = (import.meta.env.VITE_JKOS_AUTH_URL as string | undefined) ?? 'https://auth.jkos.net'
+
+let _refreshing: Promise<boolean> | null = null
+
+async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const opts: RequestInit = {
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    ...init,
+  }
+  const r = await fetch(path, opts)
+  if (r.status !== 401) return r
+
+  let data: any
+  try { data = await r.clone().json() } catch { return r }
+  if (data?.code !== 'TOKEN_EXPIRED') return r
+
+  if (!_refreshing) {
+    _refreshing = fetch(`${AUTH_URL}/auth/refresh`, { method: 'POST', credentials: 'include' })
+      .then(res => res.ok).finally(() => { _refreshing = null })
+  }
+  const ok = await _refreshing
+  if (!ok) return r
+  return fetch(path, opts)
+}
+
+async function call<T>(path: string, init?: RequestInit): Promise<T> {
+  const r = await apiFetch(path, init)
+  if (r.status === 401) { redirectToLogin(); throw new Error('Unauthorized') }
+  if (!r.ok) throw new Error(`${init?.method ?? 'GET'} ${path} → ${r.status}`)
+  return r.json() as Promise<T>
+}
 
 export const api = {
-  configure(baseUrl: string, token = '') {
-    _baseUrl = baseUrl.replace(/\/$/, '')
-    _token = token
-  },
+  getCourses: (): Promise<Course[]> =>
+    call('/api/courses'),
 
-  get configured() {
-    return _baseUrl.length > 0
-  },
+  createCourse: (course: Course): Promise<void> =>
+    call('/api/courses', { method: 'POST', body: JSON.stringify(course) }),
 
-  async _fetch(path: string, init: RequestInit = {}): Promise<Response> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      ...(_token ? { Authorization: `Bearer ${_token}` } : {}),
-    }
-    return fetch(`${_baseUrl}${path}`, { ...init, headers })
-  },
+  deleteCourse: (id: string): Promise<void> =>
+    call(`/api/courses/${id}`, { method: 'DELETE' }),
 
-  async getCourses(): Promise<Course[]> {
-    const r = await this._fetch('/api/courses')
-    if (!r.ok) throw new Error(`GET /api/courses → ${r.status}`)
-    return r.json()
-  },
+  getSegments: (): Promise<Record<string, Segment>> =>
+    call('/api/segments'),
 
-  async createCourse(course: Course): Promise<void> {
-    const r = await this._fetch('/api/courses', { method: 'POST', body: JSON.stringify(course) })
-    if (!r.ok) throw new Error(`POST /api/courses → ${r.status}`)
-  },
+  createSegment: (segment: Segment): Promise<void> =>
+    call('/api/segments', { method: 'POST', body: JSON.stringify(segment) }),
 
-  async deleteCourse(id: string): Promise<void> {
-    const r = await this._fetch(`/api/courses/${id}`, { method: 'DELETE' })
-    if (!r.ok) throw new Error(`DELETE /api/courses/${id} → ${r.status}`)
-  },
+  patchSegment: (id: string, patch: Partial<Segment> & { courseId?: string }): Promise<void> =>
+    call(`/api/segments/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 
-  async getSegments(): Promise<Record<string, Segment>> {
-    const r = await this._fetch('/api/segments')
-    if (!r.ok) throw new Error(`GET /api/segments → ${r.status}`)
-    return r.json()
-  },
+  getDailyLogs: (): Promise<DailyLog[]> =>
+    call('/api/daily-logs'),
 
-  async createSegment(segment: Segment): Promise<void> {
-    const r = await this._fetch('/api/segments', { method: 'POST', body: JSON.stringify(segment) })
-    if (!r.ok) throw new Error(`POST /api/segments → ${r.status}`)
-  },
+  upsertDailyLog: (log: DailyLog): Promise<void> =>
+    call('/api/daily-logs', { method: 'POST', body: JSON.stringify(log) }),
 
-  async patchSegment(id: string, patch: Partial<Segment> & { courseId?: string }): Promise<void> {
-    const r = await this._fetch(`/api/segments/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
-    if (!r.ok) throw new Error(`PATCH /api/segments/${id} → ${r.status}`)
-  },
+  getSettings: (): Promise<Partial<AppSettings>> =>
+    call('/api/settings'),
 
-  async getDailyLogs(): Promise<DailyLog[]> {
-    const r = await this._fetch('/api/daily-logs')
-    if (!r.ok) throw new Error(`GET /api/daily-logs → ${r.status}`)
-    return r.json()
-  },
+  saveSettings: (settings: AppSettings): Promise<void> =>
+    call('/api/settings', { method: 'PUT', body: JSON.stringify(settings) }),
 
-  async upsertDailyLog(log: DailyLog): Promise<void> {
-    const r = await this._fetch('/api/daily-logs', { method: 'POST', body: JSON.stringify(log) })
-    if (!r.ok) throw new Error(`POST /api/daily-logs → ${r.status}`)
-  },
-
-  async getSettings(): Promise<Partial<AppSettings>> {
-    const r = await this._fetch('/api/settings')
-    if (!r.ok) throw new Error(`GET /api/settings → ${r.status}`)
-    return r.json()
-  },
-
-  async saveSettings(settings: AppSettings): Promise<void> {
-    const r = await this._fetch('/api/settings', { method: 'PUT', body: JSON.stringify(settings) })
-    if (!r.ok) throw new Error(`PUT /api/settings → ${r.status}`)
-  },
-
-  async triggerNightlyJob(): Promise<void> {
-    const r = await this._fetch('/api/admin/run-nightly', { method: 'POST' })
-    if (!r.ok) throw new Error(`POST /api/admin/run-nightly → ${r.status}`)
-  },
+  triggerNightlyJob: (): Promise<void> =>
+    call('/api/admin/run-nightly', { method: 'POST' }),
 }

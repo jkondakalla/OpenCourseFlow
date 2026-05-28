@@ -13,8 +13,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   lazurosToken: '',
   aiProvider: 'none',
   theme: 'dark',
-  backendUrl: '',
-  backendToken: '',
 }
 
 interface AppState {
@@ -31,12 +29,6 @@ interface AppState {
   hydrate: () => Promise<void>
 }
 
-function configureApi(settings: AppSettings) {
-  if (settings.backendUrl) {
-    api.configure(settings.backendUrl, settings.backendToken)
-  }
-}
-
 function sortNewestFirst(courses: Course[]): Course[] {
   return [...courses].sort((a, b) => b.importedAt - a.importedAt)
 }
@@ -48,41 +40,32 @@ export const useAppStore = create<AppState>((set, get) => ({
   settings: db.getSettings(),
 
   hydrate: async () => {
-    const localSettings = db.getSettings()
-    configureApi(localSettings)
-
-    if (api.configured) {
-      try {
-        const [courses, segments, logs, remoteSettings] = await Promise.all([
-          api.getCourses(),
-          api.getSegments(),
-          api.getDailyLogs(),
-          api.getSettings(),
-        ])
-        const settings = { ...DEFAULT_SETTINGS, ...localSettings, ...remoteSettings }
-        db.saveSettings(settings)
-        set({ courses: sortNewestFirst(courses), segments, dailyLogs: logs, settings })
-        return
-      } catch (e) {
-        console.warn('[store] Backend unreachable, falling back to localStorage:', e)
-      }
+    try {
+      const [courses, segments, logs, remoteSettings] = await Promise.all([
+        api.getCourses(),
+        api.getSegments(),
+        api.getDailyLogs(),
+        api.getSettings(),
+      ])
+      const settings = { ...DEFAULT_SETTINGS, ...remoteSettings }
+      db.saveSettings(settings)
+      set({ courses: sortNewestFirst(courses), segments, dailyLogs: logs, settings })
+    } catch (e) {
+      console.warn('[store] Backend unreachable, falling back to localStorage:', e)
+      set({
+        courses: sortNewestFirst(db.getCourses()),
+        segments: db.getSegments(),
+        dailyLogs: db.getDailyLogs(),
+        settings: db.getSettings(),
+      })
     }
-
-    set({
-      courses: sortNewestFirst(db.getCourses()),
-      segments: db.getSegments(),
-      dailyLogs: db.getDailyLogs(),
-      settings: localSettings,
-    })
   },
 
   addCourse: (course) => {
     const courses = sortNewestFirst([...get().courses, course])
     db.saveCourses(courses)
     set({ courses })
-    if (api.configured) {
-      api.createCourse(course).catch(e => console.warn('[store] createCourse failed:', e))
-    }
+    api.createCourse(course).catch(e => console.warn('[store] createCourse failed:', e))
   },
 
   removeCourse: (courseId) => {
@@ -94,9 +77,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     db.saveCourses(courses)
     db.saveSegments(segments)
     set({ courses, segments })
-    if (api.configured) {
-      api.deleteCourse(courseId).catch(e => console.warn('[store] deleteCourse failed:', e))
-    }
+    api.deleteCourse(courseId).catch(e => console.warn('[store] deleteCourse failed:', e))
   },
 
   addSegment: (segment) => {
@@ -117,9 +98,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     db.saveSegments(segments)
     db.saveCourses(courses)
     set({ segments, courses })
-    if (api.configured) {
-      api.createSegment(segment).catch(e => console.warn('[store] createSegment failed:', e))
-    }
+    api.createSegment(segment).catch(e => console.warn('[store] createSegment failed:', e))
   },
 
   completeSegment: (segmentId, quizScore) => {
@@ -152,22 +131,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     db.saveDailyLogs(dailyLogs)
     set({ segments, courses, dailyLogs })
 
-    if (api.configured) {
-      const todayLog = dailyLogs.find(l => l.date === today)!
-      api.patchSegment(segmentId, { completedAt: now, quizScore, courseId: seg.courseId })
-        .catch(e => console.warn('[store] patchSegment failed:', e))
-      api.upsertDailyLog(todayLog)
-        .catch(e => console.warn('[store] upsertDailyLog failed:', e))
-    }
+    const todayLog = dailyLogs.find(l => l.date === today)!
+    api.patchSegment(segmentId, { completedAt: now, quizScore, courseId: seg.courseId })
+      .catch(e => console.warn('[store] patchSegment failed:', e))
+    api.upsertDailyLog(todayLog)
+      .catch(e => console.warn('[store] upsertDailyLog failed:', e))
   },
 
   updateSettings: (patch) => {
     const settings = { ...get().settings, ...patch }
     db.saveSettings(settings)
-    configureApi(settings)
     set({ settings })
-    if (api.configured) {
-      api.saveSettings(settings).catch(e => console.warn('[store] saveSettings failed:', e))
-    }
+    api.saveSettings(settings).catch(e => console.warn('[store] saveSettings failed:', e))
   },
 }))

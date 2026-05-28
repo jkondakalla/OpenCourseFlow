@@ -29,7 +29,15 @@ app.get('/health', (_req, res) => {
 
 // ── Auth (all routes below require a valid jkos_token cookie) ─────────────────
 
-app.use(jkosAuth({ publicKey: process.env.JKOS_AUTH_PUBLIC_KEY ?? '' }))
+const authMiddleware = process.env.JKOS_AUTH_PUBLIC_KEY
+  ? jkosAuth({ publicKey: process.env.JKOS_AUTH_PUBLIC_KEY })
+  : (req, _res, next) => { req.user = { sub: 1, role: 'admin' }; next() } // dev fallback
+
+app.use(authMiddleware)
+
+app.get('/api/auth/me', (req, res) => {
+  res.json({ user: req.user })
+})
 
 // ── Courses ───────────────────────────────────────────────────────────────────
 

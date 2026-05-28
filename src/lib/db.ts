@@ -39,8 +39,6 @@ export const db = {
     lazurosToken: '',
     aiProvider: 'none',
     theme: 'dark',
-    backendUrl: '',
-    backendToken: '',
   }),
   saveSettings: (settings: AppSettings) => save(KEYS.settings, settings),
 

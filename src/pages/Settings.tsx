@@ -129,43 +129,16 @@ export default function Settings() {
               placeholder="sk-ant-..."
               style={{ width: '100%', background: '#0f0f13', border: '1px solid #2a2a35', borderRadius: 8, padding: '9px 12px', fontSize: 13, color: '#e8e8ee', outline: 'none', boxSizing: 'border-box' }}
             />
-            <p style={{ margin: '6px 0 0', fontSize: 11, color: '#4b5563' }}>Stored in localStorage — do not use in a shared environment.</p>
+            <p style={{ margin: '6px 0 0', fontSize: 11, color: '#4b5563' }}>Stored in browser — do not use in a shared environment.</p>
           </div>
         )}
 
         {settings.aiProvider === 'none' && (
           <p style={{ margin: 0, fontSize: 12, color: '#4b5563' }}>Placeholder quizzes will be generated. Connect an AI provider for real content.</p>
         )}
-      </div>
 
-      {/* Backend sync */}
-      <div style={card}>
-        <h2 style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 600, color: '#e8e8ee' }}>Backend sync (TrueNAS)</h2>
-        <p style={{ margin: '0 0 16px', fontSize: 12, color: '#6b7280' }}>
-          Connect to your self-hosted OpenCourseFlow API to persist data on TrueNAS and enable nightly AI generation.
-        </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
-          <div>
-            <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 6 }}>API URL</label>
-            <input
-              type="text" value={settings.backendUrl}
-              onChange={e => set('backendUrl', e.target.value)}
-              placeholder="http://YOUR_TRUENAS_IP:8004"
-              style={{ width: '100%', background: '#0f0f13', border: '1px solid #2a2a35', borderRadius: 8, padding: '9px 12px', fontSize: 13, color: '#e8e8ee', outline: 'none', boxSizing: 'border-box' }}
-            />
-          </div>
-          <div>
-            <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 6 }}>API token (if JWT is enabled)</label>
-            <input
-              type="password" value={settings.backendToken}
-              onChange={e => set('backendToken', e.target.value)}
-              placeholder="Bearer token from ORDECK Settings → API Tokens"
-              style={{ width: '100%', background: '#0f0f13', border: '1px solid #2a2a35', borderRadius: 8, padding: '9px 12px', fontSize: 13, color: '#e8e8ee', outline: 'none', boxSizing: 'border-box' }}
-            />
-          </div>
-        </div>
-        {settings.backendUrl && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {settings.aiProvider !== 'none' && (
+          <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #2a2a35', display: 'flex', alignItems: 'center', gap: 10 }}>
             <button
               disabled={nightlyRunning}
               onClick={async () => {
@@ -173,16 +146,16 @@ export default function Settings() {
                 setNightlyResult(null)
                 try {
                   await api.triggerNightlyJob()
-                  setNightlyResult('Nightly job started — check back in a few minutes.')
+                  setNightlyResult('Job started — check back in a few minutes.')
                 } catch {
-                  setNightlyResult('Failed to reach backend.')
+                  setNightlyResult('Failed to trigger job.')
                 } finally {
                   setNightlyRunning(false)
                 }
               }}
               style={{ background: '#818cf820', border: '1px solid #818cf840', color: '#a5b4fc', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 8, cursor: nightlyRunning ? 'wait' : 'pointer' }}
             >
-              {nightlyRunning ? 'Running…' : 'Run nightly job now'}
+              {nightlyRunning ? 'Running…' : 'Run AI job now'}
             </button>
             {nightlyResult && <span style={{ fontSize: 12, color: '#6b7280' }}>{nightlyResult}</span>}
           </div>
@@ -192,17 +165,17 @@ export default function Settings() {
       {/* Danger zone */}
       <div style={{ ...card, borderColor: '#7f1d1d40' }}>
         <h2 style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 600, color: '#e8e8ee' }}>Data</h2>
-        <p style={{ margin: '0 0 16px', fontSize: 12, color: '#6b7280' }}>Clear all courses and progress from this device</p>
+        <p style={{ margin: '0 0 16px', fontSize: 12, color: '#6b7280' }}>Clear local cache (data is also stored server-side)</p>
         <button
           onClick={() => {
-            if (confirm('Delete all courses and progress? This cannot be undone.')) {
+            if (confirm('Clear local cache? Server data is unaffected.')) {
               db.clear()
               window.location.reload()
             }
           }}
           style={{ background: '#7f1d1d30', border: '1px solid #7f1d1d60', color: '#f87171', fontSize: 12, fontWeight: 600, padding: '8px 16px', borderRadius: 8, cursor: 'pointer' }}
         >
-          Clear all data
+          Clear local cache
         </button>
       </div>
     </div>
