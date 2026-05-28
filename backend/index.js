@@ -15,8 +15,9 @@ import { generateSegmentContent } from './ai.js'
 const app = express()
 const PORT = Number(process.env.PORT ?? 8004)
 const NIGHTLY_CRON = process.env.NIGHTLY_CRON ?? '0 2 * * *'
+const SHELL_URL = process.env.SHELL_URL ?? 'https://sylibos.jkos.net'
 
-app.use(cors({ origin: true, credentials: true }))
+app.use(cors({ origin: SHELL_URL, credentials: true }))
 app.use(express.json({ limit: '20mb' }))
 app.use(cookieParser())
 
