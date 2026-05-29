@@ -2,37 +2,50 @@ import { useEffect } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import { useAuthStore } from '../store/authStore'
+import { useTheme } from '../lib/theme'
 import { logout } from '../api/auth'
+import { Bar, Icon, Spinner, ThemeToggle, cx } from './ui'
 
-const navLinks = [
-  { to: '/', label: 'Today', end: true },
-  { to: '/import', label: 'Import', end: false },
-  { to: '/settings', label: 'Settings', end: false },
-]
+const NAV = [
+  { to: '/', label: 'Today', icon: 'book', end: true },
+  { to: '/import', label: 'Import', icon: 'upload', end: false },
+  { to: '/settings', label: 'Settings', icon: 'settings', end: false },
+] as const
+
+function Brand() {
+  return (
+    <NavLink to="/" className="flex items-center gap-2.5 group" aria-label="SylibOS home">
+      <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-accent text-accent-contrast shadow-card transition group-hover:rotate-[-6deg]">
+        <Icon name="layers" size={17} strokeWidth={2} />
+      </span>
+      <span className="font-display text-[19px] font-semibold tracking-[-0.01em] text-ink">
+        Sylib<span className="text-accent-ink">OS</span>
+      </span>
+    </NavLink>
+  )
+}
+
+function initials(name?: string, email?: string): string {
+  const src = (name || email || '?').trim()
+  const parts = src.split(/[\s@.]+/).filter(Boolean)
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || src[0].toUpperCase()
+}
 
 export default function Layout() {
   const { segments, hydrate } = useAppStore()
   const { status, init, user } = useAuthStore()
+  useTheme()
 
   useEffect(() => { init() }, [])
-  useEffect(() => {
-    if (status === 'ready') hydrate()
-  }, [status])
+  useEffect(() => { if (status === 'ready') hydrate() }, [status])
 
   if (status === 'loading' || status === 'unauthenticated') {
     return (
-      <div style={{
-        minHeight: '100vh',
-        background: '#0f0f13',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: '#6b7280',
-        fontFamily: 'monospace',
-        fontSize: 13,
-        letterSpacing: '0.08em',
-      }}>
-        {status === 'loading' ? 'VERIFYING SESSION…' : 'REDIRECTING…'}
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 text-muted">
+        <Spinner size={26} />
+        <span className="text-[13px] tracking-wide">
+          {status === 'loading' ? 'Verifying your session…' : 'Redirecting to sign in…'}
+        </span>
       </div>
     )
   }
@@ -41,78 +54,47 @@ export default function Layout() {
   const done = Object.values(segments).filter(s => s.completedAt).length
 
   return (
-    <div style={{ minHeight: '100vh', background: '#0f0f13', color: '#e8e8ee' }}>
-      <nav style={{
-        background: '#18181f',
-        borderBottom: '1px solid #2a2a35',
-        padding: '0 24px',
-        display: 'flex',
-        alignItems: 'center',
-        height: 52,
-        position: 'sticky',
-        top: 0,
-        zIndex: 100,
-      }}>
-        <span style={{ fontWeight: 700, fontSize: 15, color: '#fff', letterSpacing: '-0.02em', marginRight: 32, userSelect: 'none' }}>
-          <span style={{ color: '#818cf8' }}>OCF</span> Study
-        </span>
+    <div className="min-h-screen">
+      <header className="sticky top-0 z-50 border-b border-line bg-paper/85 backdrop-blur-xl">
+        <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
+          <Brand />
 
-        <div style={{ display: 'flex', height: '100%' }}>
-          {navLinks.map(({ to, label, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              style={({ isActive }) => ({
-                display: 'flex',
-                alignItems: 'center',
-                padding: '0 16px',
-                height: 52,
-                fontSize: 13,
-                fontWeight: 500,
-                color: isActive ? '#fff' : '#6b7280',
-                borderBottom: isActive ? '2px solid #818cf8' : '2px solid transparent',
-                textDecoration: 'none',
-                letterSpacing: '0.01em',
-                transition: 'color 0.15s',
-              })}
-            >
-              {label}
-            </NavLink>
-          ))}
-        </div>
+          <nav className="ml-2 flex items-center gap-1 sm:ml-4">
+            {NAV.map(({ to, label, icon, end }) => (
+              <NavLink key={to} to={to} end={end}
+                className={({ isActive }) => cx(
+                  'flex items-center gap-2 rounded-full px-3 py-1.5 text-[13px] font-semibold transition',
+                  isActive ? 'bg-accent-soft text-accent-ink' : 'text-muted hover:text-ink hover:bg-paper-2',
+                )}>
+                <Icon name={icon} size={17} />
+                <span className="hidden sm:inline">{label}</span>
+              </NavLink>
+            ))}
+          </nav>
 
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
-          {total > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 12, color: '#6b7280' }}>{done}/{total} lessons</span>
-              <div style={{ width: 80, height: 4, background: '#2a2a35', borderRadius: 2 }}>
-                <div style={{ width: `${(done / total) * 100}%`, height: '100%', background: '#818cf8', borderRadius: 2, transition: 'width 0.4s ease' }} />
+          <div className="ml-auto flex items-center gap-2 sm:gap-3">
+            {total > 0 && (
+              <div className="hidden items-center gap-2.5 rounded-full border border-line bg-card px-3 py-1.5 lg:flex">
+                <span className="text-[12px] font-medium text-muted tabular-nums">{done}/{total}</span>
+                <Bar value={total ? done / total : 0} height={5} className="w-20" />
               </div>
+            )}
+            <ThemeToggle />
+            <div className="flex items-center gap-2">
+              <span className="hidden text-[13px] text-muted md:inline max-w-[140px] truncate">
+                {user?.name || user?.email}
+              </span>
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent-soft text-[12px] font-bold text-accent-ink">
+                {initials(user?.name, user?.email)}
+              </span>
             </div>
-          )}
-          {user && (
-            <span style={{ fontSize: 12, color: '#9ca3af', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {user.name || user.email}
-            </span>
-          )}
-          <button
-            onClick={logout}
-            style={{
-              background: 'none',
-              border: '1px solid #2a2a35',
-              borderRadius: 4,
-              color: '#6b7280',
-              cursor: 'pointer',
-              fontSize: 11,
-              letterSpacing: '0.06em',
-              padding: '3px 10px',
-            }}
-          >
-            SIGN OUT
-          </button>
+            <button onClick={logout} title="Sign out" aria-label="Sign out"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-line text-faint transition hover:text-danger hover:border-danger/40 active:scale-95">
+              <Icon name="logout" size={16} />
+            </button>
+          </div>
         </div>
-      </nav>
+      </header>
 
       <main>
         <Outlet />

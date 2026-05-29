@@ -5,6 +5,7 @@ const KEYS = {
   segments: 'ocf:segments',
   dailyLogs: 'ocf:dailyLogs',
   settings: 'ocf:settings',
+  sliceProgress: 'ocf:sliceProgress',
 } as const
 
 function load<T>(key: string, fallback: T): T {
@@ -19,6 +20,9 @@ function load<T>(key: string, fallback: T): T {
 function save<T>(key: string, value: T): void {
   localStorage.setItem(key, JSON.stringify(value))
 }
+
+// segmentId -> furthest slice index reached (1-based). Local-only; resume aid.
+type SliceProgress = Record<string, number>
 
 export const db = {
   getCourses: (): Course[] => load(KEYS.courses, []),
@@ -41,6 +45,14 @@ export const db = {
     theme: 'dark',
   }),
   saveSettings: (settings: AppSettings) => save(KEYS.settings, settings),
+
+  getSliceProgress: (segmentId: string): number =>
+    load<SliceProgress>(KEYS.sliceProgress, {})[segmentId] ?? 1,
+  setSliceProgress: (segmentId: string, slice: number) => {
+    const all = load<SliceProgress>(KEYS.sliceProgress, {})
+    all[segmentId] = Math.max(all[segmentId] ?? 1, slice)
+    save(KEYS.sliceProgress, all)
+  },
 
   clear: () => Object.values(KEYS).forEach(k => localStorage.removeItem(k)),
 }

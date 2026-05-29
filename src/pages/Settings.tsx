@@ -2,181 +2,164 @@ import { useState } from 'react'
 import { useAppStore } from '../store/appStore'
 import { api } from '../lib/api'
 import { db } from '../lib/db'
+import { useTheme } from '../lib/theme'
+import { Card, Button, Icon, Field, Input, Segmented, cx } from '../components/ui'
 import type { AIProvider } from '../types'
 
-const card: React.CSSProperties = {
-  background: '#18181f', border: '1px solid #2a2a35', borderRadius: 14, padding: 20, marginBottom: 12,
+const PROVIDERS: Array<{ value: AIProvider; label: string }> = [
+  { value: 'none', label: 'None' },
+  { value: 'lazuros', label: 'LazurOS' },
+  { value: 'ollama', label: 'Ollama' },
+  { value: 'claude', label: 'Claude' },
+]
+
+function SettingCard({ icon, title, desc, children }: {
+  icon: Parameters<typeof Icon>[0]['name']; title: string; desc: string; children: React.ReactNode
+}) {
+  return (
+    <Card className="p-6 animate-fade-up">
+      <div className="mb-5 flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent-ink">
+          <Icon name={icon} size={19} />
+        </span>
+        <div>
+          <h2 className="font-display text-[17px] font-semibold text-ink">{title}</h2>
+          <p className="mt-0.5 text-[13px] text-muted">{desc}</p>
+        </div>
+      </div>
+      {children}
+    </Card>
+  )
 }
 
 export default function Settings() {
   const { settings, updateSettings } = useAppStore()
+  const { theme, setTheme } = useTheme()
   const [saved, setSaved] = useState(false)
-  const [nightlyRunning, setNightlyRunning] = useState(false)
-  const [nightlyResult, setNightlyResult] = useState<string | null>(null)
+  const [running, setRunning] = useState(false)
+  const [jobResult, setJobResult] = useState<string | null>(null)
 
   function set<K extends keyof typeof settings>(key: K, value: typeof settings[K]) {
     updateSettings({ [key]: value } as Partial<typeof settings>)
     setSaved(true)
-    setTimeout(() => setSaved(false), 1500)
+    setTimeout(() => setSaved(false), 1400)
   }
 
   return (
-    <div style={{ maxWidth: 640, margin: '0 auto', padding: '32px 24px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
-        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em' }}>Settings</h1>
-        {saved && <span style={{ fontSize: 13, color: '#22c55e', fontWeight: 500 }}>Saved</span>}
-      </div>
+    <div className="mx-auto max-w-2xl px-4 sm:px-6 py-8 sm:py-10">
+      <header className="mb-7 flex items-center justify-between animate-fade-up">
+        <h1 className="font-display text-[30px] font-semibold tracking-[-0.02em] text-ink">Settings</h1>
+        <span className={cx(
+          'inline-flex items-center gap-1.5 text-[13px] font-semibold text-ok transition-opacity',
+          saved ? 'opacity-100' : 'opacity-0',
+        )}>
+          <Icon name="check" size={15} strokeWidth={2.5} /> Saved
+        </span>
+      </header>
 
-      {/* Daily goal */}
-      <div style={card}>
-        <h2 style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 600, color: '#e8e8ee' }}>Daily goal</h2>
-        <p style={{ margin: '0 0 16px', fontSize: 12, color: '#6b7280' }}>How many lessons to complete each day</p>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <input
-            type="range" min={1} max={10}
-            value={settings.dailyGoal}
-            onChange={e => set('dailyGoal', Number(e.target.value))}
-            style={{ flex: 1 }}
+      <div className="space-y-4">
+        <SettingCard icon="sun" title="Appearance" desc="Light is calmer for daytime reading; dark for low light.">
+          <Segmented<'light' | 'dark'>
+            value={theme}
+            onChange={setTheme}
+            options={[{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]}
           />
-          <span style={{ fontSize: 18, fontWeight: 700, color: '#fff', minWidth: 20, textAlign: 'right' }}>{settings.dailyGoal}</span>
-        </div>
-      </div>
+        </SettingCard>
 
-      {/* AI Provider */}
-      <div style={card}>
-        <h2 style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 600, color: '#e8e8ee' }}>AI provider</h2>
-        <p style={{ margin: '0 0 16px', fontSize: 12, color: '#6b7280' }}>Used to generate quizzes and tasks from lecture content</p>
+        <SettingCard icon="target" title="Daily goal" desc="How many lessons you aim to finish each day.">
+          <div className="flex items-center gap-4">
+            <input type="range" min={1} max={10} value={settings.dailyGoal}
+              onChange={e => set('dailyGoal', Number(e.target.value))}
+              className="flex-1" />
+            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent-soft font-display text-xl font-semibold text-accent-ink tabular-nums">
+              {settings.dailyGoal}
+            </span>
+          </div>
+        </SettingCard>
 
-        <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-          {(['none', 'lazuros', 'ollama', 'claude'] as AIProvider[]).map(p => (
-            <button
-              key={p}
-              onClick={() => set('aiProvider', p)}
-              style={{
-                flex: 1, padding: '8px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: '1px solid',
-                background: settings.aiProvider === p ? '#818cf820' : 'transparent',
-                borderColor: settings.aiProvider === p ? '#818cf8' : '#2a2a35',
-                color: settings.aiProvider === p ? '#c7d2fe' : '#6b7280',
-                transition: 'all 0.15s',
-              }}
-            >
-              {p === 'none' ? 'None' : p === 'lazuros' ? 'LazurOS' : p === 'ollama' ? 'Ollama' : 'Claude API'}
-            </button>
-          ))}
-        </div>
+        <SettingCard icon="sparkles" title="AI provider"
+          desc="Generates quizzes and practice tasks from each lecture.">
+          <Segmented<AIProvider> value={settings.aiProvider} onChange={v => set('aiProvider', v)} options={PROVIDERS} full />
 
-        {settings.aiProvider === 'lazuros' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div>
-              <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 6 }}>LazurOS URL</label>
-              <input
-                type="text" value={settings.lazurosUrl}
-                onChange={e => set('lazurosUrl', e.target.value)}
-                placeholder="https://your-hub.domain/api/lazuros"
-                style={{ width: '100%', background: '#0f0f13', border: '1px solid #2a2a35', borderRadius: 8, padding: '9px 12px', fontSize: 13, color: '#e8e8ee', outline: 'none', boxSizing: 'border-box' }}
-              />
+          <div className="mt-5">
+            {settings.aiProvider === 'lazuros' && (
+              <div className="space-y-4">
+                <Field label="LazurOS URL" hint="The gateway base URL, e.g. your hub's /api/lazuros path.">
+                  <Input value={settings.lazurosUrl} placeholder="https://your-hub.domain/api/lazuros"
+                    onChange={e => set('lazurosUrl', e.target.value)} />
+                </Field>
+                <Field label="API token" hint="Shared LazurOS bearer token.">
+                  <Input type="password" value={settings.lazurosToken} placeholder="Bearer token"
+                    onChange={e => set('lazurosToken', e.target.value)} />
+                </Field>
+                <Field label="Model">
+                  <Input value={settings.ollamaModel} placeholder="llama3.2"
+                    onChange={e => set('ollamaModel', e.target.value)} />
+                </Field>
+              </div>
+            )}
+
+            {settings.aiProvider === 'ollama' && (
+              <div className="space-y-4">
+                <Field label="Ollama URL">
+                  <Input value={settings.ollamaUrl} placeholder="http://localhost:11434"
+                    onChange={e => set('ollamaUrl', e.target.value)} />
+                </Field>
+                <Field label="Model">
+                  <Input value={settings.ollamaModel} placeholder="llama3"
+                    onChange={e => set('ollamaModel', e.target.value)} />
+                </Field>
+              </div>
+            )}
+
+            {settings.aiProvider === 'claude' && (
+              <Field label="Claude API key" hint="Stored in your browser only. Avoid on shared machines.">
+                <Input type="password" value={settings.claudeApiKey} placeholder="sk-ant-..."
+                  onChange={e => set('claudeApiKey', e.target.value)} />
+              </Field>
+            )}
+
+            {settings.aiProvider === 'none' && (
+              <div className="rounded-xl border border-line bg-card-2 px-4 py-3">
+                <p className="text-[13px] text-muted">
+                  Placeholder quizzes are used. Connect a provider for questions written from the actual lecture content.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {settings.aiProvider !== 'none' && (
+            <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-line pt-5">
+              <Button variant="soft" size="sm" disabled={running}
+                icon={running ? <Icon name="clock" size={14} /> : <Icon name="lightning" size={14} />}
+                onClick={async () => {
+                  setRunning(true); setJobResult(null)
+                  try { await api.triggerNightlyJob(); setJobResult('Job started — lessons will fill in shortly.') }
+                  catch { setJobResult('Could not start the job.') }
+                  finally { setRunning(false) }
+                }}>
+                {running ? 'Running…' : 'Run AI job now'}
+              </Button>
+              {jobResult && <span className="text-[12px] text-muted">{jobResult}</span>}
             </div>
+          )}
+        </SettingCard>
+
+        <Card className="border-danger/25 p-6 animate-fade-up">
+          <div className="mb-5 flex items-start gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-danger-soft text-danger">
+              <Icon name="trash" size={18} />
+            </span>
             <div>
-              <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 6 }}>API token</label>
-              <input
-                type="password" value={settings.lazurosToken}
-                onChange={e => set('lazurosToken', e.target.value)}
-                placeholder="Generate in ORDECK Settings → API Tokens"
-                style={{ width: '100%', background: '#0f0f13', border: '1px solid #2a2a35', borderRadius: 8, padding: '9px 12px', fontSize: 13, color: '#e8e8ee', outline: 'none', boxSizing: 'border-box' }}
-              />
-            </div>
-            <div>
-              <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 6 }}>Model</label>
-              <input
-                type="text" value={settings.ollamaModel}
-                onChange={e => set('ollamaModel', e.target.value)}
-                placeholder="llama3.2"
-                style={{ width: '100%', background: '#0f0f13', border: '1px solid #2a2a35', borderRadius: 8, padding: '9px 12px', fontSize: 13, color: '#e8e8ee', outline: 'none', boxSizing: 'border-box' }}
-              />
+              <h2 className="font-display text-[17px] font-semibold text-ink">Local cache</h2>
+              <p className="mt-0.5 text-[13px] text-muted">Clears this device's copy. Your server data stays intact.</p>
             </div>
           </div>
-        )}
-
-        {settings.aiProvider === 'ollama' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div>
-              <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 6 }}>Ollama URL</label>
-              <input
-                type="text" value={settings.ollamaUrl}
-                onChange={e => set('ollamaUrl', e.target.value)}
-                placeholder="http://localhost:11434"
-                style={{ width: '100%', background: '#0f0f13', border: '1px solid #2a2a35', borderRadius: 8, padding: '9px 12px', fontSize: 13, color: '#e8e8ee', outline: 'none', boxSizing: 'border-box' }}
-              />
-            </div>
-            <div>
-              <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 6 }}>Model</label>
-              <input
-                type="text" value={settings.ollamaModel}
-                onChange={e => set('ollamaModel', e.target.value)}
-                placeholder="llama3"
-                style={{ width: '100%', background: '#0f0f13', border: '1px solid #2a2a35', borderRadius: 8, padding: '9px 12px', fontSize: 13, color: '#e8e8ee', outline: 'none', boxSizing: 'border-box' }}
-              />
-            </div>
-          </div>
-        )}
-
-        {settings.aiProvider === 'claude' && (
-          <div>
-            <label style={{ fontSize: 11, color: '#6b7280', display: 'block', marginBottom: 6 }}>Claude API key</label>
-            <input
-              type="password" value={settings.claudeApiKey}
-              onChange={e => set('claudeApiKey', e.target.value)}
-              placeholder="sk-ant-..."
-              style={{ width: '100%', background: '#0f0f13', border: '1px solid #2a2a35', borderRadius: 8, padding: '9px 12px', fontSize: 13, color: '#e8e8ee', outline: 'none', boxSizing: 'border-box' }}
-            />
-            <p style={{ margin: '6px 0 0', fontSize: 11, color: '#4b5563' }}>Stored in browser — do not use in a shared environment.</p>
-          </div>
-        )}
-
-        {settings.aiProvider === 'none' && (
-          <p style={{ margin: 0, fontSize: 12, color: '#4b5563' }}>Placeholder quizzes will be generated. Connect an AI provider for real content.</p>
-        )}
-
-        {settings.aiProvider !== 'none' && (
-          <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #2a2a35', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <button
-              disabled={nightlyRunning}
-              onClick={async () => {
-                setNightlyRunning(true)
-                setNightlyResult(null)
-                try {
-                  await api.triggerNightlyJob()
-                  setNightlyResult('Job started — check back in a few minutes.')
-                } catch {
-                  setNightlyResult('Failed to trigger job.')
-                } finally {
-                  setNightlyRunning(false)
-                }
-              }}
-              style={{ background: '#818cf820', border: '1px solid #818cf840', color: '#a5b4fc', fontSize: 12, fontWeight: 600, padding: '8px 14px', borderRadius: 8, cursor: nightlyRunning ? 'wait' : 'pointer' }}
-            >
-              {nightlyRunning ? 'Running…' : 'Run AI job now'}
-            </button>
-            {nightlyResult && <span style={{ fontSize: 12, color: '#6b7280' }}>{nightlyResult}</span>}
-          </div>
-        )}
-      </div>
-
-      {/* Danger zone */}
-      <div style={{ ...card, borderColor: '#7f1d1d40' }}>
-        <h2 style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 600, color: '#e8e8ee' }}>Data</h2>
-        <p style={{ margin: '0 0 16px', fontSize: 12, color: '#6b7280' }}>Clear local cache (data is also stored server-side)</p>
-        <button
-          onClick={() => {
-            if (confirm('Clear local cache? Server data is unaffected.')) {
-              db.clear()
-              window.location.reload()
-            }
-          }}
-          style={{ background: '#7f1d1d30', border: '1px solid #7f1d1d60', color: '#f87171', fontSize: 12, fontWeight: 600, padding: '8px 16px', borderRadius: 8, cursor: 'pointer' }}
-        >
-          Clear local cache
-        </button>
+          <Button variant="danger" size="sm" icon={<Icon name="trash" size={14} />}
+            onClick={() => { if (confirm('Clear local cache? Server data is unaffected.')) { db.clear(); window.location.reload() } }}>
+            Clear local cache
+          </Button>
+        </Card>
       </div>
     </div>
   )

@@ -2,290 +2,217 @@ import { useMemo, useState, useEffect } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
 import { generateLessonContent } from '../lib/aiService'
+import { sliceLecture } from '../lib/sliceLecture'
+import { Bar, Button, Card, Icon, Spinner, unitColor, cx } from '../components/ui'
 import type { Lecture, Segment } from '../types'
 
-const PALETTE = ['#4f46e5', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777', '#0d9488']
+const randomId = () => crypto.randomUUID()
 
-function randomId() {
-  return Math.random().toString(36).slice(2, 10)
-}
-
-type SectionGroup = { name: string | undefined; lectures: Lecture[] }
-type UnitGroup = { unit: string; color: string; unitNum: number; sections: SectionGroup[]; total: number; done: number }
+type SectionGroup = { name?: string; lectures: Lecture[] }
+type UnitGroup = { unit: string; color: string; unitNum: number; sections: SectionGroup[]; total: number; done: number; ungen: number }
 
 export default function CoursePage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { courses, segments, settings, addSegment, removeCourse } = useAppStore()
-  const [generatingId, setGeneratingId] = useState<string | null>(null)
-  const [expandedUnits, setExpandedUnits] = useState<Set<string>>(new Set())
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
+  const [busy, setBusy] = useState<Set<string>>(new Set())
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [collapsedSec, setCollapsedSec] = useState<Set<string>>(new Set())
 
   const course = courses.find(c => c.id === id)
+  useEffect(() => { if (!course) navigate('/') }, [course, navigate])
 
-  useEffect(() => {
-    if (!course) navigate('/')
-  }, [course, navigate])
-
-  const unitGroups = useMemo<UnitGroup[]>(() => {
+  const units = useMemo<UnitGroup[]>(() => {
     if (!course) return []
     const groups: UnitGroup[] = []
-    const unitIdx: Record<string, number> = {}
-
+    const idx: Record<string, number> = {}
     for (const lec of course.lectures) {
       const unit = lec.unit || 'Lectures'
-      if (unitIdx[unit] === undefined) {
-        unitIdx[unit] = groups.length
-        groups.push({ unit, color: PALETTE[groups.length % PALETTE.length], unitNum: groups.length + 1, sections: [], total: 0, done: 0 })
+      if (idx[unit] === undefined) {
+        idx[unit] = groups.length
+        groups.push({ unit, color: unitColor(groups.length), unitNum: groups.length + 1, sections: [], total: 0, done: 0, ungen: 0 })
       }
-      const ug = groups[unitIdx[unit]]
-      ug.total++
+      const g = groups[idx[unit]]
+      g.total++
       const seg = lec.segmentId ? segments[lec.segmentId] : null
-      if (seg?.completedAt) ug.done++
-
-      const sec = lec.section
-      const last = ug.sections[ug.sections.length - 1]
-      if (!last || last.name !== sec) {
-        ug.sections.push({ name: sec, lectures: [lec] })
-      } else {
-        last.lectures.push(lec)
-      }
+      if (seg?.completedAt) g.done++
+      if (!seg) g.ungen++
+      const last = g.sections[g.sections.length - 1]
+      if (!last || last.name !== lec.section) g.sections.push({ name: lec.section, lectures: [lec] })
+      else last.lectures.push(lec)
     }
     return groups
   }, [course, segments])
 
-  // Expand first unit by default
-  useEffect(() => {
-    if (unitGroups.length > 0) {
-      setExpandedUnits(new Set([unitGroups[0].unit]))
-    }
-  }, [unitGroups.length]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (units.length) setExpanded(new Set([units[0].unit])) }, [units.length]) // eslint-disable-line
 
-  function toggleUnit(unit: string) {
-    setExpandedUnits(prev => {
-      const next = new Set(prev)
-      next.has(unit) ? next.delete(unit) : next.add(unit)
-      return next
-    })
+  const toggle = (set: Set<string>, key: string, fn: (s: Set<string>) => void) => {
+    const next = new Set(set)
+    if (next.has(key)) next.delete(key); else next.add(key)
+    fn(next)
   }
 
-  function toggleSection(key: string) {
-    setCollapsedSections(prev => {
-      const next = new Set(prev)
-      next.has(key) ? next.delete(key) : next.add(key)
-      return next
-    })
-  }
-
-  async function generateForLecture(lectureId: string) {
+  async function generate(lecIds: string[]) {
     if (!course) return
-    const lec = course.lectures.find(l => l.id === lectureId)
-    if (!lec) return
-    setGeneratingId(lectureId)
+    setBusy(prev => new Set([...prev, ...lecIds]))
     try {
-      const content = await generateLessonContent(settings, lec.title, lec.content)
-      const segment: Segment = {
-        id: randomId(),
-        lectureId: lec.id,
-        courseId: course.id,
-        lectureTitle: lec.title,
-        courseTitle: course.title,
-        unit: lec.unit,
-        section: lec.section,
-        generatedAt: Date.now(),
-        quiz: content.quiz,
-        tasks: content.tasks,
+      for (const lecId of lecIds) {
+        const lec = course.lectures.find(l => l.id === lecId)
+        if (!lec || lec.segmentId) continue
+        try {
+          const content = await generateLessonContent(settings, lec.title, lec.content)
+          addSegment({
+            id: randomId(), lectureId: lec.id, courseId: course.id,
+            lectureTitle: lec.title, courseTitle: course.title,
+            unit: lec.unit, section: lec.section, generatedAt: Date.now(),
+            quiz: content.quiz, tasks: content.tasks,
+          } satisfies Segment)
+        } catch { /* skip a failed lecture */ }
       }
-      addSegment(segment)
     } finally {
-      setGeneratingId(null)
+      setBusy(prev => { const n = new Set(prev); lecIds.forEach(i => n.delete(i)); return n })
     }
   }
 
-  function handleDelete() {
+  function studyUnit(g: UnitGroup) {
     if (!course) return
-    if (confirm(`Delete "${course.title}"? This cannot be undone.`)) {
-      removeCourse(course.id)
-      navigate('/')
-    }
+    const lecs = g.sections.flatMap(s => s.lectures)
+    const next = lecs.find(l => l.segmentId && !segments[l.segmentId!]?.completedAt)
+      ?? lecs.find(l => l.segmentId)
+    if (next?.segmentId) navigate(`/lesson/${next.segmentId}`)
   }
 
   if (!course) return null
-
   const total = course.lectures.length
-  const completed = course.completedSegments
-  const pct = total > 0 ? Math.round((completed / total) * 100) : 0
+  const pct = total ? course.completedSegments / total : 0
 
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: '32px 24px' }}>
-      {/* Back */}
-      <Link to="/" style={{ fontSize: 12, color: '#6b7280', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 24 }}>
-        ← Today
+    <div className="mx-auto max-w-3xl px-4 sm:px-6 py-8">
+      <Link to="/" className="mb-6 inline-flex items-center gap-1.5 text-[13px] font-medium text-muted transition hover:text-ink">
+        <Icon name="arrow-left" size={15} /> Today
       </Link>
 
-      {/* Course header */}
-      <div style={{ marginBottom: 32 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <h1 style={{ margin: '0 0 6px', fontSize: 22, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em' }}>
-              {course.title}
-            </h1>
-            <div style={{ fontSize: 13, color: '#6b7280' }}>
-              {[course.instructor, course.level].filter(Boolean).join(' · ')}
-            </div>
-            {course.description && (
-              <p style={{ margin: '8px 0 0', fontSize: 13, color: '#4b5563', lineHeight: 1.6, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                {course.description}
-              </p>
-            )}
+      <header className="mb-8 animate-fade-up">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="font-display text-[30px] font-semibold leading-tight tracking-[-0.02em] text-ink">{course.title}</h1>
+            <p className="mt-1.5 text-[13px] text-muted">{[course.instructor, course.level].filter(Boolean).join(' · ')}</p>
+            {course.description && <p className="mt-3 max-w-xl text-[13px] leading-relaxed text-muted line-clamp-2">{course.description}</p>}
           </div>
-          <button
-            onClick={handleDelete}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#374151', fontSize: 12, padding: '4px 8px', borderRadius: 6, flexShrink: 0, transition: 'color 0.15s' }}
-            onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
-            onMouseLeave={e => (e.currentTarget.style.color = '#374151')}
-          >
-            Delete
-          </button>
+          <Button variant="ghost" size="sm" icon={<Icon name="trash" size={15} />}
+            onClick={() => { if (confirm(`Delete "${course.title}"? This cannot be undone.`)) { removeCourse(course.id); navigate('/') } }}>
+            <span className="hidden sm:inline">Delete</span>
+          </Button>
         </div>
 
-        {/* Overall progress bar */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#6b7280', marginBottom: 6 }}>
-          <span>{total} lectures · {unitGroups.length} {unitGroups.length === 1 ? 'unit' : 'units'}</span>
-          <span style={{ color: '#9ca3af', fontWeight: 500 }}>{pct}% complete</span>
+        <div className="mt-5 flex items-center justify-between text-[12px] text-muted">
+          <span>{total} lectures · {units.length} {units.length === 1 ? 'unit' : 'units'}</span>
+          <span className="font-semibold text-ink">{Math.round(pct * 100)}% complete</span>
         </div>
-        <div style={{ height: 4, background: '#2a2a35', borderRadius: 2, overflow: 'hidden' }}>
-          <div style={{ height: '100%', background: '#818cf8', borderRadius: 2, width: `${pct}%`, transition: 'width 0.4s' }} />
-        </div>
+        <Bar value={pct} height={6} className="mt-2" />
+      </header>
+
+      <div className="space-y-3">
+        {units.map(g => {
+          const open = expanded.has(g.unit)
+          const hasSections = g.sections.some(s => s.name)
+          const unitPct = g.total ? g.done / g.total : 0
+          return (
+            <Card key={g.unit} className="animate-fade-up">
+              <button onClick={() => toggle(expanded, g.unit, setExpanded)}
+                className="flex w-full items-center gap-4 p-4 text-left transition hover:bg-paper-2">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[15px] font-bold"
+                  style={{ background: `color-mix(in oklab, ${g.color} 14%, transparent)`, color: g.color }}>
+                  {g.unitNum}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-semibold text-ink">{g.unit}</p>
+                  <p className="mt-0.5 text-[12px] text-muted">{g.total} lessons · {g.done} done</p>
+                </div>
+                <div className="hidden w-24 sm:block"><Bar value={unitPct} color={g.color} height={5} /></div>
+                <span className="text-faint transition" style={{ transform: open ? 'rotate(90deg)' : 'none' }}>
+                  <Icon name="chevron" size={18} />
+                </span>
+              </button>
+
+              {open && (
+                <div className="border-t border-line">
+                  <div className="flex items-center gap-2 px-4 py-2.5">
+                    {g.sections.some(s => s.lectures.some(l => l.segmentId)) && (
+                      <Button size="sm" variant="soft" icon={<Icon name="play" size={13} />} onClick={() => studyUnit(g)}>Study unit</Button>
+                    )}
+                    {g.ungen > 0 && (
+                      <Button size="sm" variant="ghost" icon={<Icon name="sparkles" size={14} />}
+                        disabled={g.sections.flatMap(s => s.lectures).some(l => busy.has(l.id))}
+                        onClick={() => generate(g.sections.flatMap(s => s.lectures).filter(l => !l.segmentId).map(l => l.id))}>
+                        Generate {g.ungen}
+                      </Button>
+                    )}
+                  </div>
+
+                  {g.sections.map((sec, si) => {
+                    const secKey = `${g.unit}::${sec.name ?? si}`
+                    const secOpen = !collapsedSec.has(secKey)
+                    return (
+                      <div key={secKey}>
+                        {hasSections && sec.name && (
+                          <button onClick={() => toggle(collapsedSec, secKey, setCollapsedSec)}
+                            className="flex w-full items-center justify-between px-4 py-2 pl-[4.25rem] text-left">
+                            <span className="text-[11px] font-bold uppercase tracking-wide text-faint">{sec.name}</span>
+                            <span className="text-faint transition" style={{ transform: secOpen ? 'rotate(90deg)' : 'none' }}>
+                              <Icon name="chevron" size={14} />
+                            </span>
+                          </button>
+                        )}
+                        {secOpen && sec.lectures.map(lec => (
+                          <LectureRow key={lec.id} lec={lec} color={g.color}
+                            seg={lec.segmentId ? segments[lec.segmentId] : null}
+                            busy={busy.has(lec.id)} onGenerate={() => generate([lec.id])} />
+                        ))}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </Card>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function LectureRow({ lec, seg, color, busy, onGenerate }: {
+  lec: Lecture; seg: Segment | null; color: string; busy: boolean; onGenerate: () => void
+}) {
+  const done = !!seg?.completedAt
+  const slices = useMemo(() => sliceLecture(lec.id, lec.title, lec.content).length, [lec.id, lec.title, lec.content])
+  const action = done ? 'Review' : 'Start'
+
+  return (
+    <div className="flex items-center gap-3 border-t border-line px-4 py-2.5 pl-[4.25rem] transition hover:bg-paper-2">
+      <span className={cx('flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md border')}
+        style={done ? { background: color, borderColor: color } : { borderColor: 'var(--color-line-strong)' }}>
+        {done && <Icon name="check" size={11} className="text-accent-contrast" strokeWidth={2.5} />}
+      </span>
+
+      <div className="min-w-0 flex-1">
+        <p className={cx('truncate text-[13.5px]', done ? 'text-faint line-through' : 'text-ink')}>{lec.title}</p>
       </div>
 
-      {/* Unit cards */}
-      {unitGroups.map(ug => {
-        const unitPct = ug.total > 0 ? Math.round((ug.done / ug.total) * 100) : 0
-        const isExpanded = expandedUnits.has(ug.unit)
-        const hasSections = ug.sections.some(s => s.name)
-
-        return (
-          <div key={ug.unit} style={{ background: '#18181f', border: '1px solid #2a2a35', borderRadius: 14, marginBottom: 12, overflow: 'hidden' }}>
-            {/* Unit header row */}
-            <button
-              onClick={() => toggleUnit(ug.unit)}
-              style={{
-                width: '100%', background: 'none', border: 'none', cursor: 'pointer',
-                padding: '18px 20px', display: 'flex', alignItems: 'center', gap: 16, textAlign: 'left',
-              }}
-            >
-              <div style={{
-                width: 36, height: 36, borderRadius: 8, flexShrink: 0,
-                background: `${ug.color}20`, border: `1px solid ${ug.color}40`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 14, fontWeight: 700, color: ug.color,
-              }}>
-                {ug.unitNum}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 3 }}>{ug.unit}</div>
-                <div style={{ fontSize: 12, color: '#6b7280' }}>{ug.total} lessons · {ug.done} completed</div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 60, height: 3, background: '#2a2a35', borderRadius: 2 }}>
-                  <div style={{ width: `${unitPct}%`, height: '100%', background: ug.color, borderRadius: 2 }} />
-                </div>
-                <button
-                  onClick={e => { e.stopPropagation(); navigate('/'); }}
-                  style={{
-                    fontSize: 11, background: `${ug.color}20`, border: `1px solid ${ug.color}40`,
-                    borderRadius: 6, padding: '4px 10px', color: ug.color, cursor: 'pointer', fontWeight: 600,
-                  }}
-                >
-                  Study
-                </button>
-                <span style={{ color: '#4b5563', fontSize: 14, display: 'inline-block', transition: 'transform 0.2s', transform: isExpanded ? 'rotate(90deg)' : '' }}>›</span>
-              </div>
-            </button>
-
-            {/* Expanded: sections + lectures */}
-            {isExpanded && (
-              <div style={{ borderTop: '1px solid #2a2a35' }}>
-                {ug.sections.map((sg, si) => {
-                  const secKey = `${ug.unit}::${sg.name ?? si}`
-                  const isSecCollapsed = collapsedSections.has(secKey)
-
-                  return (
-                    <div key={secKey}>
-                      {/* Section header */}
-                      {hasSections && sg.name && (
-                        <button
-                          onClick={() => toggleSection(secKey)}
-                          style={{
-                            width: '100%', background: 'none', border: 'none', cursor: 'pointer',
-                            padding: '10px 20px 6px 72px', display: 'flex', alignItems: 'center',
-                            justifyContent: 'space-between', textAlign: 'left',
-                          }}
-                        >
-                          <span style={{ fontSize: 11, fontWeight: 600, color: '#4b5563', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                            {sg.name}
-                          </span>
-                          <span style={{ color: '#374151', fontSize: 14, display: 'inline-block', transition: 'transform 0.2s', transform: isSecCollapsed ? '' : 'rotate(90deg)' }}>›</span>
-                        </button>
-                      )}
-
-                      {/* Lecture rows */}
-                      {!isSecCollapsed && sg.lectures.map(lec => {
-                        const seg = lec.segmentId ? segments[lec.segmentId] : null
-                        const isDone = !!seg?.completedAt
-                        const isGenerating = generatingId === lec.id
-
-                        return (
-                          <div
-                            key={lec.id}
-                            style={{
-                              display: 'flex', alignItems: 'center', gap: 12,
-                              padding: '10px 20px 10px 72px',
-                              borderBottom: '1px solid #1e1e28',
-                            }}
-                          >
-                            <div style={{
-                              width: 16, height: 16, borderRadius: 4, flexShrink: 0,
-                              border: isDone ? 'none' : '1.5px solid #374151',
-                              background: isDone ? ug.color : 'transparent',
-                              display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            }}>
-                              {isDone && <span style={{ fontSize: 9, color: '#fff' }}>✓</span>}
-                            </div>
-                            <span style={{ fontSize: 13, color: isDone ? '#4b5563' : '#9ca3af', flex: 1, textDecoration: isDone ? 'line-through' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {lec.title}
-                            </span>
-
-                            {seg && !isDone ? (
-                              <Link
-                                to={`/lesson/${seg.id}`}
-                                style={{ fontSize: 11, background: `${ug.color}20`, border: `1px solid ${ug.color}40`, borderRadius: 6, padding: '4px 10px', color: ug.color, textDecoration: 'none', fontWeight: 600, flexShrink: 0 }}
-                              >
-                                Start
-                              </Link>
-                            ) : !seg && !isDone ? (
-                              <button
-                                onClick={() => generateForLecture(lec.id)}
-                                disabled={isGenerating}
-                                style={{ fontSize: 11, border: '1px solid #2a2a35', borderRadius: 6, padding: '4px 10px', color: isGenerating ? '#4b5563' : '#6b7280', background: 'none', cursor: isGenerating ? 'default' : 'pointer', flexShrink: 0 }}
-                              >
-                                {isGenerating ? 'Generating…' : 'Generate'}
-                              </button>
-                            ) : (
-                              <span style={{ fontSize: 10, color: '#374151', flexShrink: 0 }}>›</span>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        )
-      })}
+      {seg ? (
+        <>
+          <span className="hidden items-center gap-1 text-[11px] text-faint sm:flex"><Icon name="layers" size={12} />{slices}</span>
+          <Link to={`/lesson/${seg.id}`}>
+            <Button size="sm" variant={done ? 'ghost' : 'soft'}>{action}</Button>
+          </Link>
+        </>
+      ) : (
+        <Button size="sm" variant="ghost" disabled={busy} onClick={onGenerate}
+          icon={busy ? <Spinner size={13} /> : <Icon name="sparkles" size={13} />}>
+          {busy ? 'Generating' : 'Generate'}
+        </Button>
+      )}
     </div>
   )
 }

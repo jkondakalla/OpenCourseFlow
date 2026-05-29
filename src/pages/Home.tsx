@@ -1,381 +1,276 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppStore } from '../store/appStore'
-import { getTodayProgress, getStreak } from '../lib/scheduler'
-import type { Lecture } from '../types'
+import { useAuthStore } from '../store/authStore'
+import { getTodayProgress, getStreak, getTodayCompleted } from '../lib/scheduler'
+import { sliceLecture } from '../lib/sliceLecture'
+import { db } from '../lib/db'
+import { Badge, Bar, Button, Card, EmptyState, Icon, Ring, unitColor } from '../components/ui'
+import type { Course, Segment } from '../types'
 
-const PALETTE = ['#4f46e5', '#0891b2', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777', '#0d9488']
+function greeting(): string {
+  const h = new Date().getHours()
+  return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'
+}
+const DATE_FMT = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
 
-function GoalRing({ done, goal }: { done: number; goal: number }) {
-  const pct = goal > 0 ? Math.min(done / goal, 1) : 0
-  const r = 32
-  const circ = 2 * Math.PI * r
+function unitIndexOf(course: Course, unit: string): number {
+  const units = [...new Set(course.lectures.map(l => l.unit || 'Lectures'))]
+  return Math.max(0, units.indexOf(unit || 'Lectures'))
+}
+
+interface SliceInfo { total: number; read: number; done: boolean }
+function sliceInfoFor(course: Course, seg: Segment): SliceInfo {
+  const lec = course.lectures.find(l => l.id === seg.lectureId)
+  const total = lec ? sliceLecture(lec.id, lec.title, lec.content).length : 1
+  const read = Math.min(db.getSliceProgress(seg.id), total)
+  return { total, read, done: !!seg.completedAt }
+}
+
+function SectionTitle({ icon, children, action }: { icon: Parameters<typeof Icon>[0]['name']; children: React.ReactNode; action?: React.ReactNode }) {
   return (
-    <div style={{ position: 'relative', width: 80, height: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <svg style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }} width="80" height="80">
-        <circle cx="40" cy="40" r={r} fill="none" stroke="#2a2a35" strokeWidth="7" />
-        <circle
-          cx="40" cy="40" r={r} fill="none"
-          stroke={pct >= 1 ? '#22c55e' : '#818cf8'}
-          strokeWidth="7"
-          strokeDasharray={circ}
-          strokeDashoffset={circ * (1 - pct)}
-          strokeLinecap="round"
-          style={{ transition: 'stroke-dashoffset 0.6s ease' }}
-        />
-      </svg>
-      <span style={{ fontSize: 16, fontWeight: 700, color: '#fff' }}>
-        {done}<span style={{ color: '#4b5563', fontSize: 11 }}>/{goal}</span>
-      </span>
+    <div className="mb-3 flex items-center gap-2">
+      <Icon name={icon} size={16} className="text-faint" />
+      <h2 className="text-[12px] font-bold uppercase tracking-[0.1em] text-faint">{children}</h2>
+      {action && <div className="ml-auto">{action}</div>}
     </div>
   )
 }
 
-type SectionGroup = { name: string | undefined; lectures: Lecture[] }
-type UnitGroup = {
-  unit: string; color: string; unitNum: number
-  sections: SectionGroup[]
-  totalLecs: number; doneLecs: number; readyLecs: number
+function LessonCard({ course, seg, index }: { course: Course; seg: Segment; index: number }) {
+  const color = unitColor(unitIndexOf(course, seg.unit))
+  const info = sliceInfoFor(course, seg)
+  const action = info.done ? 'Review' : info.read > 1 ? 'Resume' : 'Start'
+
+  return (
+    <Link to={`/lesson/${seg.id}`} className="block animate-fade-up" style={{ animationDelay: `${index * 60}ms` }}>
+      <Card hover className="h-full p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full" style={{ background: color }} />
+          <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color }}>
+            {seg.unit || 'Lecture'}{seg.section ? ` · ${seg.section}` : ''}
+          </span>
+          {info.done && <Icon name="check" size={14} className="ml-auto text-ok" />}
+        </div>
+
+        <h3 className="font-display text-[17px] font-semibold leading-snug text-ink line-clamp-2">
+          {seg.lectureTitle}
+        </h3>
+
+        <div className="mt-4">
+          {info.done ? (
+            <p className="text-[12px] text-muted">
+              Completed{typeof seg.quizScore === 'number' ? ` · quiz ${seg.quizScore}/${seg.quiz.length}` : ''}
+            </p>
+          ) : (
+            <>
+              <div className="mb-1.5 flex items-center justify-between text-[11px] text-muted">
+                <span>{info.read > 1 ? `Read ${info.read - 1} of ${info.total}` : `${info.total} slices`}</span>
+                <span className="flex items-center gap-1"><Icon name="sparkles" size={12} />{seg.quiz.length} quiz</span>
+              </div>
+              <Bar value={info.total ? (info.read - 1) / info.total : 0} color={color} height={5} />
+            </>
+          )}
+        </div>
+
+        <div className="mt-4 flex items-center justify-between">
+          <span className="text-[12px] font-medium text-faint truncate">{course.title}</span>
+          <span className="inline-flex items-center gap-1 text-[13px] font-semibold" style={{ color }}>
+            {action} <Icon name="arrow-right" size={15} />
+          </span>
+        </div>
+      </Card>
+    </Link>
+  )
 }
 
 export default function Home() {
   const { courses, segments, dailyLogs, settings } = useAppStore()
+  const name = useAuthStore(s => s.user?.name)?.split(/\s+/)[0]
 
   const { done, goal } = getTodayProgress(dailyLogs, settings.dailyGoal)
   const streak = getStreak(dailyLogs, settings.dailyGoal)
+  const goalMet = done >= goal
 
-  const [activeCourseId, setActiveCourseId] = useState<string | null>(null)
-  const [activeUnitName, setActiveUnitName] = useState<string>('')
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
-
-  // Default to most-recently-imported course (store keeps courses sorted DESC)
-  useEffect(() => {
-    if (courses.length > 0 && !activeCourseId) {
-      setActiveCourseId(courses[0].id)
-    }
-  }, [courses, activeCourseId])
-
-  const activeCourse = courses.find(c => c.id === activeCourseId) ?? courses[0] ?? null
-
-  const unitGroups = useMemo<UnitGroup[]>(() => {
-    if (!activeCourse) return []
-    const groups: UnitGroup[] = []
-    const unitIdx: Record<string, number> = {}
-
-    for (const lec of activeCourse.lectures) {
-      const unit = lec.unit || 'Lectures'
-      if (unitIdx[unit] === undefined) {
-        unitIdx[unit] = groups.length
-        groups.push({ unit, color: PALETTE[groups.length % PALETTE.length], unitNum: groups.length + 1, sections: [], totalLecs: 0, doneLecs: 0, readyLecs: 0 })
-      }
-      const ug = groups[unitIdx[unit]]
-      ug.totalLecs++
-      const seg = lec.segmentId ? segments[lec.segmentId] : null
-      if (seg?.completedAt) ug.doneLecs++
-      else if (seg) ug.readyLecs++
-
-      const sec = lec.section
-      const last = ug.sections[ug.sections.length - 1]
-      if (!last || last.name !== sec) {
-        ug.sections.push({ name: sec, lectures: [lec] })
-      } else {
-        last.lectures.push(lec)
+  const incomplete = useMemo(() => {
+    const todayDone = getTodayCompleted(dailyLogs)
+    const out: Array<{ course: Course; seg: Segment }> = []
+    for (const course of courses) {
+      for (const lec of course.lectures) {
+        if (!lec.segmentId) continue
+        const seg = segments[lec.segmentId]
+        if (!seg || seg.completedAt || todayDone.includes(seg.id)) continue
+        out.push({ course, seg })
       }
     }
-    return groups
-  }, [activeCourse, segments])
+    return out
+  }, [courses, segments, dailyLogs])
 
-  // Auto-select first unit with ready lessons
-  useEffect(() => {
-    if (unitGroups.length === 0) return
-    setActiveUnitName(prev => {
-      if (prev && unitGroups.some(u => u.unit === prev)) return prev
-      return unitGroups.find(u => u.readyLecs > 0)?.unit ?? unitGroups[0]?.unit ?? ''
-    })
-  }, [unitGroups])
+  const queue = incomplete.slice(0, 4)
+  const studying = incomplete[0]?.course ?? courses[0] ?? null
 
-  const activeUnit = unitGroups.find(u => u.unit === activeUnitName)
-
-  function toggleSection(key: string) {
-    setCollapsedSections(prev => {
-      const next = new Set(prev)
-      next.has(key) ? next.delete(key) : next.add(key)
-      return next
-    })
-  }
-
-  // ── Empty state ──────────────────────────────────────────────────────────────
   if (courses.length === 0) {
     return (
-      <div style={{ maxWidth: 640, margin: '80px auto', padding: '0 24px', textAlign: 'center' }}>
-        <div style={{ fontSize: 52, marginBottom: 16 }}>📚</div>
-        <h2 style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em' }}>No courses yet</h2>
-        <p style={{ margin: '0 0 28px', fontSize: 14, color: '#6b7280' }}>Import a MIT OCW course ZIP to get started.</p>
-        <Link to="/import" style={{ background: '#818cf8', color: '#fff', padding: '10px 24px', borderRadius: 10, textDecoration: 'none', fontWeight: 600, fontSize: 14 }}>
-          Import Course →
-        </Link>
+      <div className="mx-auto max-w-5xl px-4 sm:px-6">
+        <EmptyState icon="cap" title="Your library is empty"
+          body="Import a course from MIT OpenCourseWare and SylibOS will break each lecture into short, followable lessons."
+          action={<Link to="/import"><Button icon={<Icon name="upload" size={17} />}>Import a course</Button></Link>} />
       </div>
     )
   }
 
-  // ── Dashboard ────────────────────────────────────────────────────────────────
-  return (
-    <div style={{ maxWidth: 960, margin: '0 auto', padding: '32px 24px' }}>
+  const totalSegs = Object.keys(segments).length
 
-      {/* Course header + streak/goal */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 28 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#818cf8', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 6 }}>
-            Currently studying
-          </div>
-          <h1 style={{ margin: '0 0 4px', fontSize: 24, fontWeight: 700, color: '#fff', letterSpacing: '-0.03em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {activeCourse.title}
+  return (
+    <div className="mx-auto max-w-5xl px-4 sm:px-6 py-8 sm:py-10">
+      <header className="mb-10 flex flex-wrap items-start justify-between gap-6 animate-fade-up">
+        <div className="min-w-0">
+          <p className="mb-1.5 text-[12px] font-bold uppercase tracking-[0.12em] text-accent-ink">
+            Today · {DATE_FMT.format(new Date())}
+          </p>
+          <h1 className="font-display text-[34px] font-semibold leading-tight tracking-[-0.02em] text-ink">
+            {greeting()}{name ? `, ${name}` : ''}
           </h1>
-          <div style={{ fontSize: 13, color: '#6b7280' }}>
-            {[activeCourse.instructor, activeCourse.level].filter(Boolean).join(' · ')}
-            {activeCourse.instructor || activeCourse.level ? '' : `${activeCourse.lectures.length} lectures`}
-          </div>
+          <p className="mt-2 max-w-md text-[15px] text-muted">
+            {goalMet
+              ? 'You have hit your goal for today. Anything more is a bonus.'
+              : incomplete.length === 0
+                ? 'No lessons are waiting. Generate more from one of your courses.'
+                : `You have ${incomplete.length} lesson${incomplete.length === 1 ? '' : 's'} ready. ${goal - done} to go for today.`}
+          </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0 }}>
+        <div className="flex items-center gap-4">
           {streak > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(249,115,22,0.1)', border: '1px solid rgba(249,115,22,0.2)', borderRadius: 8, padding: '6px 12px' }}>
-              <span>🔥</span>
-              <span style={{ color: '#fb923c', fontWeight: 600 }}>{streak}</span>
-              <span style={{ color: 'rgba(251,146,60,0.7)', fontSize: 12 }}>day streak</span>
+            <div className="flex flex-col items-center rounded-2xl border border-warn/30 bg-warn-soft px-4 py-3">
+              <Icon name="flame" size={22} className="text-warn" strokeWidth={1.5} />
+              <span className="mt-1 text-xl font-bold leading-none text-warn tabular-nums">{streak}</span>
+              <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-warn/80">day streak</span>
             </div>
           )}
-          <GoalRing done={done} goal={goal} />
-        </div>
-      </div>
-
-      {/* Active unit card */}
-      {activeUnit ? (
-        <div style={{
-          background: '#18181f',
-          border: `1px solid ${activeUnit.color}40`,
-          borderRadius: 16,
-          padding: 24,
-          marginBottom: 24,
-          position: 'relative',
-          overflow: 'hidden',
-        }}>
-          {/* Ambient glow */}
-          <div style={{
-            position: 'absolute', top: 0, right: 0, width: 220, height: 220,
-            background: `radial-gradient(circle, ${activeUnit.color}18 0%, transparent 70%)`,
-            pointerEvents: 'none',
-          }} />
-
-          {/* Unit header */}
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: activeUnit.color, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>
-                Unit {activeUnit.unitNum}
-              </div>
-              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em' }}>
-                {activeUnit.unit}
-              </h2>
+          <Ring value={goal ? done / goal : 0} size={92} stroke={8} color={goalMet ? 'var(--color-ok)' : 'var(--color-accent)'}>
+            <div className="text-center">
+              <div className="font-display text-2xl font-semibold leading-none text-ink tabular-nums">{done}</div>
+              <div className="text-[11px] text-faint">of {goal}</div>
             </div>
-            <div style={{
-              background: `${activeUnit.color}20`, border: `1px solid ${activeUnit.color}40`,
-              borderRadius: 20, padding: '4px 12px', fontSize: 12, color: activeUnit.color, fontWeight: 600, flexShrink: 0,
-            }}>
-              {activeUnit.readyLecs > 0 ? `${activeUnit.readyLecs} ready` : `${activeUnit.doneLecs}/${activeUnit.totalLecs} done`}
+          </Ring>
+        </div>
+      </header>
+
+      <section className="mb-12">
+        <SectionTitle icon="target"
+          action={incomplete.length > queue.length && studying
+            ? <Link to={`/course/${studying.id}`} className="text-[12px] font-semibold text-accent-ink hover:underline">See all</Link>
+            : undefined}>
+          {goalMet ? 'Keep going' : 'Up next'}
+        </SectionTitle>
+
+        {queue.length > 0 ? (
+          <div className="grid gap-4 sm:grid-cols-2">
+            {queue.map(({ course, seg }, i) => <LessonCard key={seg.id} course={course} seg={seg} index={i} />)}
+          </div>
+        ) : (
+          <Card className="p-8 text-center">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-ok-soft text-ok">
+              <Icon name="check" size={24} />
             </div>
-          </div>
+            <p className="font-display text-lg font-semibold text-ink">
+              {totalSegs > 0 ? 'Every lesson is done' : 'No lessons yet'}
+            </p>
+            <p className="mx-auto mt-1 max-w-sm text-sm text-muted">
+              {totalSegs > 0
+                ? 'You have worked through everything you generated. Open a course to generate more.'
+                : 'Open a course and generate lessons to start studying.'}
+            </p>
+            {studying && (
+              <Link to={`/course/${studying.id}`} className="mt-4 inline-block">
+                <Button variant="soft" icon={<Icon name="sparkles" size={16} />}>Generate lessons</Button>
+              </Link>
+            )}
+          </Card>
+        )}
+      </section>
 
-          {/* Sections + lessons */}
-          {activeUnit.sections.map((sg, si) => {
-            const key = `${activeUnit.unit}::${sg.name ?? si}`
-            const isCollapsed = collapsedSections.has(key)
-            const hasSections = activeUnit.sections.some(s => s.name)
+      {studying && <CourseSummary course={studying} segments={segments} />}
 
-            return (
-              <div key={key} style={{ marginBottom: 4 }}>
-                {hasSections && sg.name && (
-                  <button
-                    onClick={() => toggleSection(key)}
-                    style={{
-                      width: '100%', background: 'none', border: 'none', cursor: 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '8px 0', color: '#9ca3af', fontSize: 12, fontWeight: 600,
-                      letterSpacing: '0.04em', textTransform: 'uppercase', textAlign: 'left',
-                    }}
-                  >
-                    <span>{sg.name}</span>
-                    <span style={{ transform: isCollapsed ? '' : 'rotate(90deg)', transition: 'transform 0.2s', fontSize: 14 }}>›</span>
-                  </button>
-                )}
-
-                {!isCollapsed && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 8 }}>
-                    {sg.lectures.map(lec => {
-                      const seg = lec.segmentId ? segments[lec.segmentId] : null
-                      const isDone = !!seg?.completedAt
-                      return (
-                        <div
-                          key={lec.id}
-                          style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 12px', borderRadius: 8, background: '#0f0f13' }}
-                        >
-                          <div style={{
-                            width: 18, height: 18, borderRadius: 5, flexShrink: 0,
-                            border: isDone ? 'none' : '1.5px solid #374151',
-                            background: isDone ? activeUnit.color : 'transparent',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          }}>
-                            {isDone && <span style={{ fontSize: 10, color: '#fff' }}>✓</span>}
-                          </div>
-                          <span style={{
-                            fontSize: 13, flex: 1,
-                            color: isDone ? '#4b5563' : '#d1d5db',
-                            textDecoration: isDone ? 'line-through' : 'none',
-                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          }}>
-                            {lec.title}
-                          </span>
-                          {seg && !isDone && (
-                            <Link
-                              to={`/lesson/${seg.id}`}
-                              style={{ background: activeUnit.color, color: '#fff', fontSize: 11, fontWeight: 600, padding: '4px 12px', borderRadius: 6, textDecoration: 'none', flexShrink: 0 }}
-                            >
-                              Start
-                            </Link>
-                          )}
-                          {!seg && !isDone && (
-                            <Link
-                              to={`/course/${activeCourse.id}`}
-                              style={{ border: '1px solid #2a2a35', color: '#6b7280', fontSize: 11, padding: '4px 12px', borderRadius: 6, textDecoration: 'none', flexShrink: 0 }}
-                            >
-                              Generate
-                            </Link>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-
-          {/* View full course link */}
-          <div style={{ marginTop: 12, borderTop: '1px solid #2a2a35', paddingTop: 12 }}>
-            <Link
-              to={`/course/${activeCourse.id}`}
-              style={{ fontSize: 12, color: activeUnit.color, textDecoration: 'none', fontWeight: 500 }}
-            >
-              View full course →
-            </Link>
-          </div>
-        </div>
-      ) : (
-        <div style={{ background: '#18181f', border: '1px dashed #2a2a35', borderRadius: 16, padding: 32, textAlign: 'center', marginBottom: 24 }}>
-          <p style={{ color: '#6b7280', marginBottom: 12, fontSize: 14 }}>No lessons generated yet.</p>
-          <Link to={`/course/${activeCourse.id}`} style={{ background: '#818cf8', color: '#fff', padding: '8px 20px', borderRadius: 8, textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>
-            Open course to generate →
-          </Link>
-        </div>
-      )}
-
-      {/* Unit switcher */}
-      {unitGroups.length > 1 && (
-        <div style={{ marginBottom: 32 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#4b5563', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>
-            All units
-          </div>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            {unitGroups.map(ug => {
-              const isActive = ug.unit === activeUnitName
-              const pct = ug.totalLecs > 0 ? Math.round((ug.doneLecs / ug.totalLecs) * 100) : 0
-              return (
-                <button
-                  key={ug.unit}
-                  onClick={() => setActiveUnitName(ug.unit)}
-                  style={{
-                    background: isActive ? `${ug.color}18` : '#18181f',
-                    border: `1px solid ${isActive ? ug.color + '60' : '#2a2a35'}`,
-                    borderRadius: 10, padding: '10px 14px', cursor: 'pointer',
-                    textAlign: 'left', minWidth: 130, transition: 'all 0.15s',
-                  }}
-                >
-                  <div style={{ fontSize: 11, color: isActive ? ug.color : '#4b5563', fontWeight: 600, marginBottom: 4 }}>
-                    Unit {ug.unitNum}
-                  </div>
-                  <div style={{ fontSize: 12, color: isActive ? '#fff' : '#9ca3af', fontWeight: 500, marginBottom: 8, lineHeight: 1.3 }}>
-                    {ug.unit}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <div style={{ flex: 1, height: 3, background: '#2a2a35', borderRadius: 2 }}>
-                      <div style={{ width: `${pct}%`, height: '100%', background: ug.color, borderRadius: 2 }} />
-                    </div>
-                    <span style={{ fontSize: 10, color: '#4b5563' }}>{pct}%</span>
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Other courses */}
       {courses.length > 1 && (
-        <div>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#4b5563', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 10 }}>
-            Your courses
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <section className="mt-12">
+          <SectionTitle icon="layers">Your library</SectionTitle>
+          <div className="grid gap-3 sm:grid-cols-2">
             {courses.map(course => {
-              const isActive = course.id === activeCourse?.id
-              const pct = course.lectures.length > 0 ? Math.round((course.completedSegments / course.lectures.length) * 100) : 0
+              const pct = course.lectures.length ? course.completedSegments / course.lectures.length : 0
               return (
-                <div
-                  key={course.id}
-                  onClick={() => { setActiveCourseId(course.id); setActiveUnitName('') }}
-                  style={{
-                    background: isActive ? '#1e1e2a' : '#18181f',
-                    border: `1px solid ${isActive ? '#818cf860' : '#2a2a35'}`,
-                    borderRadius: 12, padding: '14px 16px', cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', gap: 16, transition: 'all 0.15s',
-                  }}
-                >
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14, fontWeight: 500, color: isActive ? '#fff' : '#e8e8ee', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 2 }}>
-                      {course.title}
+                <Link key={course.id} to={`/course/${course.id}`}>
+                  <Card hover className="flex items-center gap-4 p-4">
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent-ink">
+                      <Icon name="book" size={20} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold text-ink">{course.title}</p>
+                      <p className="mt-0.5 text-[12px] text-muted">{course.lectures.length} lectures · {Math.round(pct * 100)}% done</p>
                     </div>
-                    <div style={{ fontSize: 12, color: '#6b7280' }}>{course.lectures.length} lectures</div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-                    <div style={{ width: 64, height: 3, background: '#2a2a35', borderRadius: 2 }}>
-                      <div style={{ width: `${pct}%`, height: '100%', background: '#818cf8', borderRadius: 2 }} />
-                    </div>
-                    <span style={{ fontSize: 12, color: '#6b7280', minWidth: 28 }}>{pct}%</span>
-                  </div>
-                  <Link
-                    to={`/course/${course.id}`}
-                    onClick={e => e.stopPropagation()}
-                    style={{ fontSize: 11, color: '#6b7280', border: '1px solid #2a2a35', padding: '4px 10px', borderRadius: 6, textDecoration: 'none', flexShrink: 0 }}
-                  >
-                    Open
-                  </Link>
-                </div>
+                    <Icon name="chevron" size={18} className="text-faint" />
+                  </Card>
+                </Link>
               )
             })}
           </div>
-        </div>
-      )}
-
-      {/* Single course: show open button */}
-      {courses.length === 1 && (
-        <div style={{ marginTop: 8 }}>
-          <Link
-            to={`/course/${activeCourse.id}`}
-            style={{ fontSize: 13, color: '#6b7280', textDecoration: 'none' }}
-          >
-            View full course outline →
-          </Link>
-        </div>
+        </section>
       )}
     </div>
+  )
+}
+
+function CourseSummary({ course, segments }: { course: Course; segments: Record<string, Segment> }) {
+  const units = useMemo(() => {
+    const map = new Map<string, { total: number; done: number }>()
+    for (const lec of course.lectures) {
+      const u = lec.unit || 'Lectures'
+      const cur = map.get(u) ?? { total: 0, done: 0 }
+      cur.total++
+      const seg = lec.segmentId ? segments[lec.segmentId] : null
+      if (seg?.completedAt) cur.done++
+      map.set(u, cur)
+    }
+    return [...map.entries()]
+  }, [course, segments])
+
+  const pct = course.lectures.length ? course.completedSegments / course.lectures.length : 0
+
+  return (
+    <section>
+      <SectionTitle icon="book"
+        action={<Link to={`/course/${course.id}`} className="text-[12px] font-semibold text-accent-ink hover:underline">Open course</Link>}>
+        Currently studying
+      </SectionTitle>
+      <Card glow={unitColor(0)} className="p-6">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-display text-2xl font-semibold tracking-[-0.01em] text-ink">{course.title}</h3>
+            <p className="mt-1 text-[13px] text-muted">
+              {[course.instructor, course.level].filter(Boolean).join(' · ') || `${course.lectures.length} lectures`}
+            </p>
+          </div>
+          <Badge>{Math.round(pct * 100)}% complete</Badge>
+        </div>
+
+        <Bar value={pct} height={6} className="mt-4" />
+
+        <div className="mt-5 grid gap-2 sm:grid-cols-2">
+          {units.slice(0, 6).map(([name, u], i) => (
+            <div key={name} className="flex items-center gap-3 rounded-xl bg-card-2 px-3 py-2.5">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: unitColor(i) }} />
+              <span className="min-w-0 flex-1 truncate text-[13px] text-ink">{name}</span>
+              <span className="text-[12px] tabular-nums text-faint">{u.done}/{u.total}</span>
+            </div>
+          ))}
+        </div>
+        {units.length > 6 && (
+          <Link to={`/course/${course.id}`} className="mt-3 inline-flex items-center gap-1 text-[13px] font-semibold text-accent-ink hover:underline">
+            +{units.length - 6} more units <Icon name="arrow-right" size={14} />
+          </Link>
+        )}
+      </Card>
+    </section>
   )
 }
