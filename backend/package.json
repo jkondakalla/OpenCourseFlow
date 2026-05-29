@@ -1,8 +1,8 @@
 {
-  "name": "opencourseflow-api",
+  "name": "sylibos-api",
   "version": "1.0.0",
   "private": true,
-  "description": "OpenCourseFlow backend — REST API + nightly AI segment generation",
+  "description": "SylibOS backend — REST API + nightly AI segment generation",
   "main": "index.js",
   "type": "module",
   "scripts": {

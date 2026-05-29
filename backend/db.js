@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 
-const DB_PATH = process.env.DB_PATH ?? 'opencourseflow.db'
+const DB_PATH = process.env.DB_PATH ?? 'sylibos.db'
 export const db = new Database(DB_PATH)
 
 db.pragma('journal_mode = WAL')

@@ -23,7 +23,7 @@ from .converter import manifest_to_course
 
 app = typer.Typer(
     name="preprocessor",
-    help="Convert MIT OCW ZIP archives into structured CourseManifest JSON for OpenCourseFlow.",
+    help="Convert MIT OCW ZIP archives into structured CourseManifest JSON for SylibOS.",
     add_completion=False,
 )
 
@@ -41,12 +41,12 @@ def main(
     ),
     push_to: Optional[str] = typer.Option(
         None, "--push-to",
-        help="POST the converted course to an OCF backend URL (e.g. http://localhost:8004).",
+        help="POST the converted course to a SylibOS backend URL (e.g. http://localhost:8004).",
     ),
     token: Optional[str] = typer.Option(
         None, "--token", "-t",
-        help="Bearer token for the OCF backend.",
-        envvar="OCF_TOKEN",
+        help="Bearer token for the SylibOS backend.",
+        envvar="SYLIBOS_TOKEN",
     ),
     include_exams: bool = typer.Option(
         False, "--include-exams",

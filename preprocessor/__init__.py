@@ -1,6 +1,6 @@
 """
 OCW Preprocessor v2 — converts MIT OpenCourseWare ZIP archives into
-structured CourseManifest JSON for OpenCourseFlow.
+structured CourseManifest JSON for SylibOS.
 
 Supported formats:
   Modern (post-2015): JSON tree with data.json + pages/ + resources/

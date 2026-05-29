@@ -1,11 +1,11 @@
 import type { Course, Segment, DailyLog, AppSettings } from '../types'
 
 const KEYS = {
-  courses: 'ocf:courses',
-  segments: 'ocf:segments',
-  dailyLogs: 'ocf:dailyLogs',
-  settings: 'ocf:settings',
-  sliceProgress: 'ocf:sliceProgress',
+  courses: 'sylibos:courses',
+  segments: 'sylibos:segments',
+  dailyLogs: 'sylibos:dailyLogs',
+  settings: 'sylibos:settings',
+  sliceProgress: 'sylibos:sliceProgress',
 } as const
 
 function load<T>(key: string, fallback: T): T {

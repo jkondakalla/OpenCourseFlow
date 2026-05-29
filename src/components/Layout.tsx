@@ -8,7 +8,7 @@ import { Bar, Icon, Spinner, ThemeToggle, cx } from './ui'
 
 const NAV = [
   { to: '/', label: 'Today', icon: 'book', end: true },
-  { to: '/import', label: 'Import', icon: 'upload', end: false },
+  { to: '/library', label: 'Library', icon: 'layers', end: false },
   { to: '/settings', label: 'Settings', icon: 'settings', end: false },
 ] as const
 

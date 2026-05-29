@@ -27,7 +27,7 @@ async function apiFetch(path: string, init: RequestInit = {}): Promise<Response>
   return fetch(path, opts)
 }
 
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
+export async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await apiFetch(path, init)
   if (r.status === 401) { redirectToLogin(); throw new Error('Unauthorized') }
   if (!r.ok) throw new Error(`${init?.method ?? 'GET'} ${path} → ${r.status}`)

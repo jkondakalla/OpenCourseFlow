@@ -11,7 +11,7 @@
     <!-- Apply saved theme before paint to avoid a flash of the wrong theme -->
     <script>
       try {
-        var s = JSON.parse(localStorage.getItem('ocf:settings') || '{}');
+        var s = JSON.parse(localStorage.getItem('sylibos:settings') || '{}');
         document.documentElement.setAttribute('data-theme', s.theme === 'dark' ? 'dark' : 'light');
       } catch (e) {}
     </script>

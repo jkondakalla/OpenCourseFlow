@@ -1,8 +1,8 @@
 """
-CourseManifest → OCF Course JSON  (v2)
+CourseManifest → SylibOS Course JSON  (v2)
 
 Converts the structured preprocessor output into the flat Course + Lecture
-format expected by the OpenCourseFlow backend API (/api/courses).
+format expected by the SylibOS backend API (/api/courses).
 
 Mapping rules:
   UnitNode              → Lecture.unit
@@ -83,7 +83,7 @@ def manifest_to_course(
     exclude_exams: bool = True,
 ) -> dict[str, Any]:
     """
-    Convert a CourseManifest to an OCF Course dict ready for POST /api/courses.
+    Convert a CourseManifest to a SylibOS Course dict ready for POST /api/courses.
 
     Parameters
     ----------

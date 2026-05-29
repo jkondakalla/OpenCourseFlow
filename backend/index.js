@@ -5,6 +5,7 @@ import cron from 'node-cron'
 import { randomUUID } from 'crypto'
 import { jkosAuth } from './jkos-auth.js'
 import {
+  db,
   getCourses, getCourse, insertCourse, deleteCourse,
   getSegments, insertSegment, patchSegment, updateCourseCompletedSegments,
   getDailyLogs, upsertDailyLog,
@@ -12,6 +13,8 @@ import {
   getLecturesWithoutSegments,
 } from './db.js'
 import { generateSegmentContent } from './ai.js'
+import { openLibraryDb, attachLibraryAssetRoute, attachLibraryRoutes } from './library.js'
+import { runLibraryMigrations } from './migrations.js'
 
 const app = express()
 app.set('trust proxy', 1)
@@ -23,11 +26,18 @@ app.use(cors({ origin: SHELL_URL, credentials: true }))
 app.use(express.json({ limit: '20mb' }))
 app.use(cookieParser())
 
+const lib = openLibraryDb(process.env.LIBRARY_DB_PATH || '/data/library.db')
+runLibraryMigrations(db)
+
 // ── Health (public — before auth middleware) ───────────────────────────────────
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'opencourseflow-api' })
+  res.json({ status: 'ok', service: 'sylibos-api' })
 })
+
+// ── Library asset route (public — before auth middleware) ─────────────────────
+
+attachLibraryAssetRoute(app, lib)
 
 // ── Auth (all routes below require a valid jkos_token cookie) ─────────────────
 
@@ -37,8 +47,13 @@ const authMiddleware = process.env.JKOS_AUTH_PUBLIC_KEY
 
 app.use(authMiddleware)
 
+// ── Library catalog/preview/add routes (authenticated) ───────────────────────
+
+attachLibraryRoutes(app, { lib, db })
+
 app.get('/api/auth/me', (req, res) => {
-  res.json({ user: req.user })
+  const { sub, iat, exp, ...rest } = req.user
+  res.json({ user: { id: String(sub), ...rest } })
 })
 
 // ── Courses ───────────────────────────────────────────────────────────────────
@@ -298,8 +313,8 @@ app.post('/api/admin/run-nightly', async (_req, res) => {
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
-  console.log(`[ocf-api] Running on port ${PORT}`)
-  console.log(`[ocf-api] DB: ${process.env.DB_PATH ?? 'opencourseflow.db'}`)
-  console.log(`[ocf-api] Auth: jkOS Auth RS256 (JKOS_AUTH_PUBLIC_KEY ${process.env.JKOS_AUTH_PUBLIC_KEY ? 'set' : 'MISSING'})`)
-  console.log(`[ocf-api] Nightly cron: ${NIGHTLY_CRON}`)
+  console.log(`[sylibos-api] Running on port ${PORT}`)
+  console.log(`[sylibos-api] DB: ${process.env.DB_PATH ?? 'sylibos.db'}`)
+  console.log(`[sylibos-api] Auth: jkOS Auth RS256 (JKOS_AUTH_PUBLIC_KEY ${process.env.JKOS_AUTH_PUBLIC_KEY ? 'set' : 'MISSING'})`)
+  console.log(`[sylibos-api] Nightly cron: ${NIGHTLY_CRON}`)
 })
