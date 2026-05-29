@@ -6,6 +6,8 @@ RUN npm install --omit=dev
 
 COPY *.js ./
 
+ENV NODE_ENV=production
+
 EXPOSE 8004
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
